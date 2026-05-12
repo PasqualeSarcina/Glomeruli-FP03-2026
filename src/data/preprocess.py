@@ -156,6 +156,7 @@ def preprocess(
                 )
 
                 del patch, seg_mask_patch, tissue_mask_patch
+                gc.collect()
 
         slide.close()
         del slide, tissue_mask, seg_mask, slide_lowres
