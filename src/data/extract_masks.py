@@ -92,33 +92,30 @@ def extract_seg_mask(annotation_path: str, slide_dimension: tuple, ds: float) ->
 
     mask = np.zeros((slide_dimension[1], slide_dimension[0]), dtype=np.uint8)
 
-    for annotation in root.findall(".//Annotation"):
-        points = []
+    for annotation in root.iter():
+        if annotation.tag.lower().endswith("annotation"):
+            points = []
 
-        coordinates = annotation.find("Coordinates")
-        if coordinates is None:
-            continue
+            for coord in annotation.iter():
+                if coord.tag.lower().endswith("coordinate"):
+                    x0 = float(coord.attrib["X"])
+                    y0 = float(coord.attrib["Y"])
 
-        
-        for coord in coordinates.findall("Coordinate"):
-            x0 = float(coord.attrib["X"])
-            y0 = float(coord.attrib["Y"])
+                    # Coordinate level 0 -> coordinate chooses level
+                    x = int(round(x0 / ds))
+                    y = int(round(y0 / ds))
 
-            # Coordinate level 0 -> coordinate level scelto
-            x = int(round(x0 / ds))
-            y = int(round(y0 / ds))
+                    points.append([x, y])
 
-            points.append([x, y])
+            if len(points) >= 3:
+                points = np.array(points, dtype=np.int32)
 
-        if len(points) >= 3:
-            points = np.array(points, dtype=np.int32)
+                xs = points[:, 0]
+                ys = points[:, 1]
 
-            xs = points[:, 0]
-            ys = points[:, 1]
+                rr, cc = polygon(ys, xs, shape=mask.shape)
 
-            rr, cc = polygon(ys, xs, shape=mask.shape)
-
-            mask[rr, cc] = 1
+                mask[rr, cc] = 1
 
 
     return mask.astype(np.uint8)

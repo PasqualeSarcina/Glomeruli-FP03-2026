@@ -155,7 +155,7 @@ def preprocess(
                     output_path / "mask" / filename
                 )
 
-                del patch, seg_mask_patch
+                del patch, seg_mask_patch, tissue_mask_patch
 
         slide.close()
         del slide, tissue_mask, seg_mask, slide_lowres
