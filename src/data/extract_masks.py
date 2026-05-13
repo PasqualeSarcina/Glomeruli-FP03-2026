@@ -4,10 +4,11 @@ from pathlib import Path
 import numpy as np
 import openslide
 from scipy.signal import argrelextrema
-from skimage.draw import polygon
+import skimage
 from skimage.filters.rank import entropy
 from skimage.morphology import disk, opening, closing, remove_small_objects
 from skimage.morphology import remove_small_holes
+from PIL import Image
 
 
 def filter_entropy_image(image, threshold, disk_radius=3):
@@ -16,12 +17,13 @@ def filter_entropy_image(image, threshold, disk_radius=3):
 
 
 def extract_tissue_mask(
-    slide: openslide.OpenSlide,
+    slide_path: Path,
     level: int = 2,
     small_objects_max_size: int = 1499,
     small_holes_max_size: int = 5000
 ) -> np.ndarray:
 
+    slide = openslide.OpenSlide(slide_path)
     w, h = slide.level_dimensions[level]
 
     img = slide.read_region((0, 0), level, (w, h)).convert("L")
@@ -71,51 +73,118 @@ def extract_tissue_mask(
         connectivity=2
     )
 
-    clean_mask = clean.astype(np.uint8)
+    clean_mask = clean.astype(np.bool)
 
     return clean_mask
 
 
-
-def extract_seg_mask(annotation_path: str, slide_dimension: tuple, ds: float) -> np.ndarray:
+def parse_xml_annotations(xml_path: Path) -> list[np.ndarray]:
     """
-    Extracts a binary segmentation mask from an XML annotation file for a given slide.
+    Read glomeruli polygon annotations from an XML file.
 
-    Parameters:
-    - annotation_path: Path to the XML annotation file.
-    - slide_dimension: Tuple containing the dimensions of the slide at the desired level (width, height).
-    - ds: Downsampling factor at the desired level.
+    Expected XML structure:
+    <Annotations>
+        <Annotation>
+            <Coordinates>
+                <Coordinate X="..." Y="..." />
+                <Coordinate X="..." Y="..." />
+                ...
+            </Coordinates>
+        </Annotation>
+    </Annotations>
+
+    Returns
+    -------
+    polygons:
+        List of polygons. Each polygon is an array of shape (N, 2),
+        containing x, y coordinates at WSI level 0.
     """
 
-    ann_file = ET.parse(Path(annotation_path))
-    root = ann_file.getroot()
+    tree = ET.parse(xml_path)
+    root = tree.getroot()
 
-    mask = np.zeros((slide_dimension[1], slide_dimension[0]), dtype=np.uint8)
+    polygons: list[np.ndarray] = []
 
     for annotation in root.iter():
         if annotation.tag.lower().endswith("annotation"):
-            points = []
+            coords = []
 
             for coord in annotation.iter():
                 if coord.tag.lower().endswith("coordinate"):
-                    x0 = float(coord.attrib["X"])
-                    y0 = float(coord.attrib["Y"])
+                    x = coord.attrib.get("X")
+                    y = coord.attrib.get("Y")
 
-                    # Coordinate level 0 -> coordinate chooses level
-                    x = int(round(x0 / ds))
-                    y = int(round(y0 / ds))
+                    if x is not None and y is not None:
+                        coords.append([float(x), float(y)])
 
-                    points.append([x, y])
+            if len(coords) >= 3:
+                polygons.append(np.array(coords, dtype=np.float32))
 
-            if len(points) >= 3:
-                points = np.array(points, dtype=np.int32)
-
-                xs = points[:, 0]
-                ys = points[:, 1]
-
-                rr, cc = polygon(ys, xs, shape=mask.shape)
-
-                mask[rr, cc] = 1
+    return polygons
 
 
-    return mask.astype(np.uint8)
+def create_patch_seg_mask(
+    polygons: list[np.ndarray],
+    location: tuple[int, int],
+    patch_size: int
+) -> Image.Image:
+    """
+    Create a binary segmentation mask for a specific WSI patch.
+
+    Parameters
+    ----------
+    polygons:
+        List of glomeruli polygons in WSI level-0 coordinates.
+    location:
+        Top-left coordinates as tuple of the patch in WSI level-0 coordinates.
+    patch_size:
+        Size of the patch extracted from the WSI at level 0.
+
+    Returns
+    -------
+    mask_img:
+        Pillow Image containing the binary mask.
+        Pixel values:
+        0 = non-glomerulus
+        1 = glomerulus
+    """
+
+    mask = np.zeros((patch_size, patch_size), dtype=np.uint8)
+
+    patch_x_min = location[0]
+    patch_y_min = location[1]
+    patch_x_max = location[0] + patch_size
+    patch_y_max = location[1] + patch_size
+
+    for polygon in polygons:
+        min_x, min_y = polygon.min(axis=0)
+        max_x, max_y = polygon.max(axis=0)
+
+        # Skip polygons that do not intersect the current patch
+        if max_x < patch_x_min or min_x > patch_x_max:
+            continue
+        if max_y < patch_y_min or min_y > patch_y_max:
+            continue
+
+        # Convert WSI coordinates to patch-local coordinates
+        local_polygon = polygon.copy().astype(np.float32)
+        local_polygon[:, 0] -= location[0]
+        local_polygon[:, 1] -= location[1]
+
+        local_polygon = np.round(local_polygon).astype(np.int32)
+
+        # skimage.draw.polygon wants rows and columns:
+        # rows = y coordinates
+        # cols = x coordinates
+        rr, cc = skimage.draw.polygon(
+            local_polygon[:, 1],
+            local_polygon[:, 0],
+            shape=mask.shape,
+        )
+
+        mask[rr, cc] = 1
+
+    # Convert numpy mask to Pillow Image
+    mask_img = Image.fromarray(mask, mode="L")
+
+    return mask_img
