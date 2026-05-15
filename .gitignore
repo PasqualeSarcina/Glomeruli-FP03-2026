@@ -219,3 +219,6 @@ __marimo__/
 
 # Project local data
 ./data/
+
+# Claude
+.claude/
