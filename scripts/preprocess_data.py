@@ -1,12 +1,13 @@
 import argparse
 import json
+import os
 import random
 import sys
 import warnings
 from pathlib import Path
 
 import numpy as np
-from tqdm import tqdm
+from tqdm.contrib.concurrent import process_map
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
@@ -82,6 +83,17 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Sliding-window stride at level 0. Defaults to patch_original_size.",
     )
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=max(1, (os.cpu_count() or 2) // 2),
+        help=(
+            "Number of parallel worker processes for tissue masking, Reinhard stats, "
+            "and patch extraction. Default maps to one worker per physical core on SMT "
+            "systems (os.cpu_count() // 2). Note: Reinhard stats peaks around 1 GB RAM "
+            "per worker; size accordingly to your machine."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -113,6 +125,49 @@ def split_dataset(
         start = end
 
     return split_paths
+
+
+# ------------------------------------------------------------
+# Worker functions (module-level so they pickle for multiprocessing)
+# ------------------------------------------------------------
+
+def _tissue_mask_task(task: tuple) -> str | None:
+    slide_path, tissue_masks_path, mask_extraction_level = task
+    tissue_mask_file = tissue_masks_path / f"{slide_path.stem}.npy"
+
+    if tissue_mask_file.exists():
+        return None
+
+    tissue_mask = extract_tissue_mask(slide_path, level=mask_extraction_level)
+    np.save(tissue_mask_file, tissue_mask)
+    return slide_path.stem
+
+
+def _reinhard_stats_task(task: tuple) -> tuple[str, dict]:
+    slide_path, tissue_masks_path, mask_extraction_level = task
+    slide_id = slide_path.stem
+    tissue_mask_file = tissue_masks_path / f"{slide_id}.npy"
+
+    if not tissue_mask_file.exists():
+        raise FileNotFoundError(f"Tissue mask not found for slide {slide_id}")
+
+    tissue_mask = np.load(tissue_mask_file)
+
+    source_mean, source_std = compute_reinhard_source_stats(
+        slide_path=slide_path,
+        tissue_mask=tissue_mask,
+        mask_extraction_level=mask_extraction_level,
+    )
+
+    return slide_id, {
+        "mean": source_mean.tolist(),
+        "std": source_std.tolist(),
+    }
+
+
+def _patch_extraction_task(task: dict) -> str:
+    preprocess_single_slide(**task)
+    return task["slide_path"].stem
 
 
 def main():
@@ -182,52 +237,46 @@ def main():
     with split_path.open("w", encoding="utf-8") as f:
         json.dump(split_serializable, f, indent=4)
 
-    # ------------------------------------------------------------
-    # Generate tissue masks for all WSI
-    # ------------------------------------------------------------
-    for slide_path in tqdm(slide_paths, desc="Generating tissue masks"):
-        tissue_mask_file = tissue_masks_path / f"{slide_path.stem}.npy"
-
-        if tissue_mask_file.exists():
-            continue
-
-        tissue_mask = extract_tissue_mask(
-            slide_path,
-            level=args.mask_extraction_level,
-        )
-
-        np.save(tissue_mask_file, tissue_mask)
+    workers = max(1, args.workers)
+    print(f"Using {workers} parallel worker(s).")
 
     # ------------------------------------------------------------
-    # Compute Reinhard source statistics for every WSI
+    # Generate tissue masks for all WSI (parallel)
+    # ------------------------------------------------------------
+    tissue_mask_tasks = [
+        (slide_path, tissue_masks_path, args.mask_extraction_level)
+        for slide_path in slide_paths
+    ]
+
+    process_map(
+        _tissue_mask_task,
+        tissue_mask_tasks,
+        max_workers=workers,
+        desc="Generating tissue masks",
+        chunksize=1,
+    )
+
+    # ------------------------------------------------------------
+    # Compute Reinhard source statistics for every WSI (parallel)
     # ------------------------------------------------------------
     if source_stats_path.exists():
         with source_stats_path.open("r", encoding="utf-8") as f:
             source_stats = json.load(f)
     else:
-        source_stats = {}
+        reinhard_stats_tasks = [
+            (slide_path, tissue_masks_path, args.mask_extraction_level)
+            for slide_path in slide_paths
+        ]
 
-        for slide_path in tqdm(slide_paths, desc="Computing Reinhard source stats"):
-            slide_id = slide_path.stem
-            tissue_mask_file = tissue_masks_path / f"{slide_id}.npy"
+        results = process_map(
+            _reinhard_stats_task,
+            reinhard_stats_tasks,
+            max_workers=workers,
+            desc="Computing Reinhard source stats",
+            chunksize=1,
+        )
 
-            if not tissue_mask_file.exists():
-                raise FileNotFoundError(
-                    f"Tissue mask not found for slide {slide_id}"
-                )
-
-            tissue_mask = np.load(tissue_mask_file)
-
-            source_mean, source_std = compute_reinhard_source_stats(
-                slide_path=slide_path,
-                tissue_mask=tissue_mask,
-                mask_extraction_level=args.mask_extraction_level,
-            )
-
-            source_stats[slide_id] = {
-                "mean": source_mean.tolist(),
-                "std": source_std.tolist(),
-            }
+        source_stats = {slide_id: stats for slide_id, stats in results}
 
         with source_stats_path.open("w", encoding="utf-8") as f:
             json.dump(source_stats, f, indent=4)
@@ -256,8 +305,10 @@ def main():
             json.dump(reinhard_targets, f, indent=4)
 
     # ------------------------------------------------------------
-    # Sequential preprocessing
+    # Parallel preprocessing across all slides of all splits
     # ------------------------------------------------------------
+    patch_tasks = []
+
     for split_name, split_slide_paths in split_paths.items():
         output_path = patches_path / split_name
 
@@ -274,23 +325,28 @@ def main():
             reinhard_targets if apply_reinhard_augmentation else None
         )
 
-        for slide_path in tqdm(
-                split_slide_paths,
-                desc=f"Preprocessing {split_name} slides",
-        ):
-            preprocess_single_slide(
-                slide_path=slide_path,
-                output_path=output_path,
-                annotations_path=annotations_path,
-                tissue_masks_path=tissue_masks_path,
-                source_stats=source_stats,
-                reinhard_targets=split_reinhard_targets,
-                apply_reinhard_augmentation=apply_reinhard_augmentation,
-                patch_stride=patch_stride,
-                mask_extraction_level=args.mask_extraction_level,
-                patch_original_size=args.patch_original_size,
-                patch_resize=args.patch_resize,
-            )
+        for slide_path in split_slide_paths:
+            patch_tasks.append({
+                "slide_path": slide_path,
+                "output_path": output_path,
+                "annotations_path": annotations_path,
+                "tissue_masks_path": tissue_masks_path,
+                "source_stats": source_stats,
+                "reinhard_targets": split_reinhard_targets,
+                "apply_reinhard_augmentation": apply_reinhard_augmentation,
+                "patch_stride": patch_stride,
+                "mask_extraction_level": args.mask_extraction_level,
+                "patch_original_size": args.patch_original_size,
+                "patch_resize": args.patch_resize,
+            })
+
+    process_map(
+        _patch_extraction_task,
+        patch_tasks,
+        max_workers=workers,
+        desc="Preprocessing slides",
+        chunksize=1,
+    )
 
 
 if __name__ == "__main__":
