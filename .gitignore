@@ -220,7 +220,8 @@ __marimo__/
 # Project local data
 ./data/
 *.tar.gz
-images
+raw_images
+data
 
 # Claude
 .claude/
