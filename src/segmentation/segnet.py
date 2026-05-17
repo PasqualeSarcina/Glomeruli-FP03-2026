@@ -4,7 +4,7 @@ from keras import layers
 
 
 def build_segnet_vgg19(
-    input_shape: tuple = (400, 400, 3),
+    input_shape: tuple = (384, 384, 3),
     num_classes: int = 2,
 ) -> keras.Model:
     """

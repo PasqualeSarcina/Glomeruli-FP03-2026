@@ -19,7 +19,7 @@ class SegmentationDataset:
     when `augment=True`. Apply only to the training split.
     """
 
-    INPUT_SIZE = (400, 400)
+    INPUT_SIZE = (384, 384)
 
     def __init__(
         self,
@@ -71,12 +71,14 @@ class SegmentationDataset:
     def _load_image(self, path: tf.Tensor) -> tf.Tensor:
         raw = tf.io.read_file(path)
         image = tf.image.decode_png(raw, channels=3)
+        image = tf.image.resize(image, self.INPUT_SIZE)
         image = tf.cast(image, tf.float32) / 255.0
         return image
 
     def _load_mask(self, path: tf.Tensor) -> tf.Tensor:
         raw = tf.io.read_file(path)
         mask = tf.image.decode_png(raw, channels=1)
+        mask = tf.image.resize(mask, self.INPUT_SIZE, method='nearest')
         mask = tf.cast(mask, tf.int32)
         return mask
 
