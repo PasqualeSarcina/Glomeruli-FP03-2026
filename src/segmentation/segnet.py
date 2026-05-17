@@ -80,7 +80,7 @@ def compile_segnet(model: keras.Model, initial_lr: float = 0.1) -> keras.Model:
     model.compile(
         optimizer=optimizer,
         loss="sparse_categorical_crossentropy",
-        metrics=["accuracy", keras.metrics.MeanIoU(num_classes=2)],
+        metrics=["accuracy", keras.metrics.MeanIoU(num_classes=2, sparse_y_pred=False)],
     )
 
     return model
