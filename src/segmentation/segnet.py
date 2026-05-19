@@ -13,8 +13,8 @@ def build_segnet_vgg19(
     Architecture overview:
     - Encoder: VGG19 pretrained on ImageNet, 5 pooling stages.
       Each max-pool halves spatial dimensions:
-        input (400x400) -> block1_pool (200x200) -> block2_pool (100x100)
-                        -> block3_pool (50x50)   -> block4_pool (25x25)
+        input (384x384) -> block1_pool (192x192) -> block2_pool (96x96)
+                        -> block3_pool (48x48)   -> block4_pool (24x24)
                         -> block5_pool (12x12)
     - Decoder: 5 upsampling blocks mirroring encoder depth.
     - Output: 1x1 Conv2D + softmax for per-pixel class probabilities.
