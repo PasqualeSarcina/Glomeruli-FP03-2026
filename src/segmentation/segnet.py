@@ -59,17 +59,54 @@ def _decoder_block(x: tf.Tensor, filters: int, name: str) -> tf.Tensor:
     return x
 
 
-def compile_segnet(model: keras.Model, initial_lr: float = 0.1) -> keras.Model:
+def dice_loss(y_true: tf.Tensor, y_pred: tf.Tensor, smooth: float = 1e-6) -> tf.Tensor:
     """
-    Compile SegNet with SGD + momentum and sparse categorical crossentropy.
+    Soft Dice loss on the glomerulus class (class 1).
 
-    SGD + momentum is chosen over Adam following Bueno et al. (2020):
-    more stable convergence under heavy class imbalance
-    (background >> glomerulus pixels).
+    y_true: (B, H, W, 1) int32  — integer masks from the dataset pipeline
+    y_pred: (B, H, W, 2) float32 — softmax probabilities
+    """
+    y_true_f = tf.cast(tf.squeeze(y_true, axis=-1), tf.float32)
+    y_pred_f = y_pred[..., 1]
+    intersection = tf.reduce_sum(y_true_f * y_pred_f)
+    return 1.0 - (2.0 * intersection + smooth) / (
+        tf.reduce_sum(y_true_f) + tf.reduce_sum(y_pred_f) + smooth
+    )
 
-    sparse_categorical_crossentropy expects integer masks (0/1),
-    not one-hot. MeanIoU is reported alongside accuracy because accuracy
-    is misleading when background pixels dominate (~99% of each patch).
+
+def combined_loss(y_true: tf.Tensor, y_pred: tf.Tensor) -> tf.Tensor:
+    """
+    Sparse categorical cross-entropy + Dice loss.
+
+    Cross-entropy handles per-pixel calibration across both classes.
+    Dice directly optimises overlap on the minority glomerulus class,
+    compensating for the heavy background dominance that makes
+    cross-entropy alone collapse toward predicting all-background.
+    """
+    bce = tf.reduce_mean(
+        keras.losses.sparse_categorical_crossentropy(
+            tf.squeeze(y_true, axis=-1), y_pred
+        )
+    )
+    return bce + dice_loss(y_true, y_pred)
+
+
+def compile_segnet(
+    model: keras.Model,
+    initial_lr: float = 0.01,
+    loss_fn: str = "combined",
+) -> keras.Model:
+    """
+    Compile SegNet with SGD + momentum.
+
+    loss_fn: "combined" (BCE + Dice, default) or "crossentropy".
+    initial_lr default is 0.01 — the original 0.1 delayed val IoU
+    improvement to epoch 5 in the first training run.
+
+    SGD + momentum is used over Adam following Bueno et al. (2020):
+    more stable convergence under heavy class imbalance.
+    MeanIoU is tracked alongside accuracy because accuracy is
+    misleading when background pixels dominate each patch.
     """
     optimizer = keras.optimizers.SGD(
         learning_rate=initial_lr,
@@ -77,13 +114,28 @@ def compile_segnet(model: keras.Model, initial_lr: float = 0.1) -> keras.Model:
         weight_decay=1e-4,
     )
 
+    loss = combined_loss if loss_fn == "combined" else "sparse_categorical_crossentropy"
+
     model.compile(
         optimizer=optimizer,
-        loss="sparse_categorical_crossentropy",
+        loss=loss,
         metrics=["accuracy", keras.metrics.MeanIoU(num_classes=2, sparse_y_pred=False)],
     )
 
     return model
+
+
+def freeze_encoder(model: keras.Model) -> None:
+    """Freeze all VGG19 encoder layers (block1–block5). Call compile_segnet after."""
+    for layer in model.layers:
+        if layer.name.startswith("block"):
+            layer.trainable = False
+
+
+def unfreeze_encoder(model: keras.Model) -> None:
+    """Unfreeze all layers. Call compile_segnet after to apply the change."""
+    for layer in model.layers:
+        layer.trainable = True
 
 
 def lr_step_decay(epoch: int, lr: float) -> float:
