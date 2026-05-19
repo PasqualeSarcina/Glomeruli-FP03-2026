@@ -64,7 +64,7 @@ class SegmentationDataset:
             ds = ds.flat_map(self._expand_with_augment)
             if self.shuffle:
                 ds = ds.shuffle(
-                    buffer_size=2 * len(self._image_paths),
+                    buffer_size=500,
                     reshuffle_each_iteration=True,
                 )
 
