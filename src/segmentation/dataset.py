@@ -59,14 +59,13 @@ class SegmentationDataset:
         ds = ds.map(self._load_pair, num_parallel_calls=tf.data.AUTOTUNE)
 
         if self.augment:
-            # Each image produces two samples: original + one randomly augmented.
-            # A second shuffle breaks up the resulting adjacent pairs before batching.
-            ds = ds.flat_map(self._expand_with_augment)
+            # Concatenate original dataset with an augmented copy.
+            # concatenate() produces a proper finite dataset that Keras can
+            # iterate epoch-by-epoch without flat_map epoch-boundary issues.
+            aug_ds = ds.map(self._augment_pair, num_parallel_calls=tf.data.AUTOTUNE)
+            ds = ds.concatenate(aug_ds)
             if self.shuffle:
-                ds = ds.shuffle(
-                    buffer_size=500,
-                    reshuffle_each_iteration=True,
-                )
+                ds = ds.shuffle(buffer_size=500, reshuffle_each_iteration=True)
 
         ds = ds.batch(self.batch_size)
         ds = ds.prefetch(tf.data.AUTOTUNE)
@@ -88,13 +87,6 @@ class SegmentationDataset:
         mask = tf.image.resize(mask, self.INPUT_SIZE, method='nearest')
         mask = tf.cast(mask, tf.int32)
         return mask
-
-    def _expand_with_augment(self, image: tf.Tensor, mask: tf.Tensor) -> tf.data.Dataset:
-        """Returns a 2-element dataset: the original pair followed by one augmented pair."""
-        aug_image, aug_mask = self._augment_pair(image, mask)
-        return tf.data.Dataset.from_tensors((image, mask)).concatenate(
-            tf.data.Dataset.from_tensors((aug_image, aug_mask))
-        )
 
     def _augment_pair(self, image: tf.Tensor, mask: tf.Tensor):
         # Same k for image and mask: 0 (identity), 1 (90 CCW), 3 (270 CCW).
