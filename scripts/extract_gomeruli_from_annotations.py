@@ -2,14 +2,18 @@ import argparse
 from pathlib import Path
 import sys
 
+import numpy as np
 from tqdm import tqdm
-
-from src.data.crop_glomeruli import crop_glomeruli
-from src.data.extract_masks import parse_xml_annotations
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
+
+from src.data.crop_glomeruli import crop_glomeruli
+from src.data.extract_masks import parse_xml_annotations
+
+target_mean = np.array([70.0, 8.0, 5.0], dtype=np.float32)
+target_std = np.array([12.0, 4.0, 3.0], dtype=np.float32)
 
 
 def parse_args() -> argparse.Namespace:
@@ -35,7 +39,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--remove-context",
-        type=bool,
+        action=argparse.BooleanOptionalAction,
         default=True,
         help="Whether or not to remove the tissue around glomeruli annotations. Default: True.",
     )
@@ -52,6 +56,7 @@ def main():
     args = parse_args()
 
     output_path = PROJECT_ROOT / "data" / "glomeruli"
+    output_path.mkdir(parents=True, exist_ok=True)
 
     slides_path = args.slides_path
     annotations_path = args.annotations_path or slides_path
@@ -77,15 +82,16 @@ def main():
 
         # Extract glomeruli crops and save them to output_path
         polygons = parse_xml_annotations(xml_path)
-        crops = crop_glomeruli(slide_path, polygons, args.margin, args.remove_context)
+        crops = crop_glomeruli(slide_path, polygons, args.margin, args.remove_context, apply_color_normalization=True,
+                               target_mean=target_mean, target_std=target_std)
 
-        name_counter=0
+        name_counter = 0
         for crop in crops:
             crop = crop.resize((args.images_size, args.images_size))
 
             crop_output_path = output_path / f"{slide_name}_{name_counter}.png"
             crop.save(crop_output_path)
-            name_counter+=1
+            name_counter += 1
 
 
 if __name__ == "__main__":
