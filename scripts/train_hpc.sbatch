@@ -9,7 +9,7 @@
 #SBATCH --mem=64G
 #SBATCH --time=12:00:00
 #SBATCH --mail-type=ALL
-#SBATCH --mail-user=REPLACE_WITH_YOUR_EMAIL@studenti.polito.it
+#SBATCH --mail-user=s348829@studenti.polito.it
 #SBATCH --output=slurm-%j.out
 #SBATCH --error=slurm-%j.err
 
