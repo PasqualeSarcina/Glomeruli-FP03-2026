@@ -13,17 +13,18 @@ class DinoV2:
             model_name: Literal["small", "base", "large", "giant"] = "base",
             input_size = 518
     ):
-        assert input_size % 14 == 0, "Input size must be a multiple of 14"
         backbone = keras_hub.models.DINOV2Backbone.from_preset("dinov2_" + model_name)
         backbone.trainable = False
         self.backbone = backbone
-        self.input_size = (input_size, input_size)
 
+        assert input_size % self.backbone.patch_size == 0, "Input size must be a multiple of 14"
+        self.input_size = (input_size, input_size)
 
     def _preprocess_image(self, image: Image.Image) -> np.ndarray:
         image = image.convert("RGB").resize(self.input_size)
         array = keras.preprocessing.image.img_to_array(image)
-        return array
+        expanded_array = np.expand_dims(array, axis=0)
+        return expanded_array
 
     @staticmethod
     def _get_cls_token(embedding: np.ndarray) -> np.ndarray:
