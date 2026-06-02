@@ -13,7 +13,7 @@ class DinoV2:
             model_name: Literal["small", "base", "large", "giant"] = "base",
             input_size = 518
     ):
-        assert(input_size % 14 == 0, "Input size must be a multiple of 14")
+        assert input_size % 14 == 0, "Input size must be a multiple of 14"
         backbone = keras_hub.models.DINOV2Backbone.from_preset("dinov2_" + model_name)
         backbone.trainable = False
         self.backbone = backbone
@@ -40,7 +40,8 @@ class DinoV2:
             image,
             return_type: Literal["cls", "patch"]
     ) -> np.ndarray:
-        features = self.backbone({"images": image})
+        processed_image = self._preprocess_image(image)
+        features = self.backbone({"images": processed_image})
         features = keras.ops.convert_to_numpy(features)
 
         if return_type == "cls":
