@@ -13,7 +13,10 @@ class DinoV2:
             model_name: Literal["small", "base", "large", "giant"] = "base",
             input_size = 518
     ):
-        backbone = keras_hub.models.DINOV2Backbone.from_preset("dinov2_" + model_name)
+        backbone = keras_hub.models.DINOV2Backbone.from_preset(
+            "dinov2_" + model_name,
+            image_shape=(input_size, input_size, 3),
+        )
         backbone.trainable = False
         self.backbone = backbone
 
