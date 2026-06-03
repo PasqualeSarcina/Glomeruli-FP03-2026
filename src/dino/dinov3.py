@@ -28,8 +28,8 @@ _MODEL_PRESETS: dict[str, str] = {
 class DinoV3:
     def __init__(
             self,
-            model_name: DinoV3ModelName = "base",
-            input_size: int = 518
+            model_name: DinoV3ModelName,
+            input_size
     ):
         if model_name not in _MODEL_PRESETS:
             raise ValueError(f"Invalid model name: {model_name}")

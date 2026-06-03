@@ -6,12 +6,18 @@ import keras_hub
 import numpy as np
 from PIL import Image
 
+DinoV2ModelName = Literal[
+    "small",
+    "base",
+    "large",
+    "giant"
+]
 
 class DinoV2:
     def __init__(
             self,
-            model_name: Literal["small", "base", "large", "giant"] = "base",
-            input_size = 518
+            model_name: DinoV2ModelName,
+            input_size
     ):
         backbone = keras_hub.models.DINOV2Backbone.from_preset(
             "dinov2_" + model_name,
