@@ -5,13 +5,16 @@ import sys
 import numpy as np
 from PIL import Image
 from tqdm import tqdm
+
+from src.backbones.nasnet import NASNet
+
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 
-from src.dino.dinov2 import DinoV2ModelName, DinoV2
-from src.dino.dinov3 import DinoV3ModelName, DinoV3
+from src.backbones.dinov2 import DinoV2ModelName, DinoV2
+from src.backbones.dinov3 import DinoV3ModelName, DinoV3
 
 
 def parse_args():
@@ -59,6 +62,11 @@ def parse_args():
         required=True,
     )
 
+    nasnet_parser = subparsers.add_parser(
+        "nasnet",
+        description="Extract glomeruli embeds using NASNet."
+    )
+
     parser.add_argument(
         "crops_dir",
         type=Path,
@@ -70,7 +78,8 @@ def parse_args():
         type=int,
         help="Input image size. For DINOv2, the input size must be a multiple of 14."
              " For DINOv3, the input size must be a multiple of the patch size of the selected model"
-             " (small: 16, base: 16, large: 14, huge_plus: 14, 7b: 14).",
+             " (small: 16, base: 16, large: 14, huge_plus: 14, 7b: 14)."
+             "For NASNet is recommended to not set a different input dimension",
     )
 
     return parser.parse_args()
@@ -85,11 +94,18 @@ def main():
                 args.backbone_size,
                 args.input_size
             )
+
         case "dinov3":
             model = DinoV3(
                 args.backbone_size,
                 args.input_size
             )
+
+        case "nasnet":
+            model = NASNet(
+                args.input_size if args.input_size else 331
+            )
+
         case _:
             raise ValueError(f"Invalid backbone: {model_name}")
 
@@ -120,11 +136,14 @@ def main():
         writer = csv.writer(f)
         writer.writerow(["index", "image_path"])
 
-        for i, image_path in enumerate(tqdm(image_paths, desc="Extracting CLS embeddings")):
+        for i, image_path in enumerate(tqdm(image_paths, desc=f"Extracting embeddings with {model_name}_{args.backbone_size}")):
             image = Image.open(image_path).convert("RGB")
 
             embed = model(image, args.mode)
             embed = np.squeeze(embed)
+
+            if args.mode == "patch":
+                embed = embed.mean(axis=0)
 
             np_memmap[i] = embed
 
