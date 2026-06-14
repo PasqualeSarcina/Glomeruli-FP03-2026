@@ -117,12 +117,14 @@ def main():
         parts.append(args.backbone_size)
     if model_name in ("dinov2", "dinov3"):
         parts.append(args.mode)
+    parts.append(str(Path(crops_dir).stem))
     parts.append("embeddings")
-    filename = "_".join(parts) + ".npy"
+    filename_stem = "_".join(parts)
 
-    np_embeddings = output_dir / filename
+    np_embeddings = output_dir / f"{filename_stem}.npy"
     print(f"Saving embeddings to {np_embeddings}")
-    csv_file = output_dir / filename
+    csv_file = output_dir / f"{filename_stem}.csv"
+    print(f"Saving image paths to {csv_file}")
 
     image_paths = sorted(
         path for path in crops_dir.iterdir()

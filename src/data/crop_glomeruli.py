@@ -101,10 +101,12 @@ def crop_glomeruli(
     Crop glomeruli from a WSI based on their polygon annotations.
 
     If apply_color_normalization is True, Reinhard normalization is applied
-    only inside the glomerulus polygon.
+    only inside the glomerulus polygon when remove_context is True, otherwise
+    it is applied to all tissue pixels in the crop.
 
-    Source mean and source standard deviation are computed directly from
-    the current crop, using only pixels inside the polygon.
+    When remove_context is True, source statistics are computed from the
+    glomerulus polygon. Otherwise, they are computed from all tissue pixels
+    in the crop, excluding the light background.
 
     If remove_context is True, everything outside the polygon is set to black.
     """
@@ -146,7 +148,8 @@ def crop_glomeruli(
             crops.append(crop)
             continue
 
-        # Reinhard solo dentro il polygon
+        # Reinhard sul polygon se il contesto verrà rimosso, altrimenti
+        # sul tessuto dell'intero crop escludendo lo sfondo chiaro.
         if apply_color_normalization:
             if target_mean is None or target_std is None:
                 raise ValueError(
@@ -154,15 +157,20 @@ def crop_glomeruli(
                     "apply_color_normalization=True."
                 )
 
-            # Calcolo source_mean e source_std dentro il crop,
-            # usando solo i pixel interni al polygon
             rgb = np.array(crop).astype(np.float32) / 255.0
             lab = color.rgb2lab(rgb)
 
-            lab_inside_polygon = lab[polygon_mask]
+            normalization_mask = polygon_mask
+            if not remove_context:
+                normalization_mask = rgb.mean(axis=2) < 0.85
 
-            source_mean = lab_inside_polygon.mean(axis=0)
-            source_std = lab_inside_polygon.std(axis=0)
+                if normalization_mask.sum() == 0:
+                    normalization_mask = polygon_mask
+
+            lab_tissue = lab[normalization_mask]
+
+            source_mean = lab_tissue.mean(axis=0)
+            source_std = lab_tissue.std(axis=0)
 
             eps = 1e-6
             source_std = np.where(source_std < eps, 1.0, source_std)
@@ -173,7 +181,7 @@ def crop_glomeruli(
                 source_std=source_std,
                 target_mean=target_mean,
                 target_std=target_std,
-                tissue_mask_patch=polygon_mask,
+                tissue_mask_patch=normalization_mask,
             )
 
         # Nero fuori dal polygon
