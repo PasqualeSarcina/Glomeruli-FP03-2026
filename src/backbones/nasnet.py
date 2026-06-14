@@ -1,15 +1,15 @@
-import keras
+from tensorflow import keras
 import numpy as np
 from PIL import Image
-from keras.src.applications.nasnet import preprocess_input
+from tensorflow.keras.applications.nasnet import preprocess_input
 
 
-class NASNet():
+class NASNet:
     def __init__(
             self,
             input_size: int = 331
     ):
-        assert input_size > 32 == 0, "Input size should be greater than 32"
+        assert input_size > 32, "Input size should be greater than 32"
         self.input_size = input_size
         self.backbone = keras.applications.NASNetLarge(
             include_top=False,
@@ -19,6 +19,7 @@ class NASNet():
             name="nasnet_large",
         )
         self.backbone.trainable = False
+        self.hidden_dim = self.backbone.output_shape[-1]
 
     def _preprocess_image(self, image: Image.Image) -> np.ndarray:
         image = image.convert("RGB").resize((self.input_size, self.input_size))
@@ -37,5 +38,5 @@ class NASNet():
         image: Image.Image
     ) -> np.ndarray:
         x = self._preprocess_image(image)
-        embedding = self.backbone.predict(x, verbose=0)
+        embedding = self.backbone(x, training=False).numpy()
         return embedding.squeeze(0).astype("float32")

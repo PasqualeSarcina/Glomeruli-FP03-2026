@@ -56,6 +56,10 @@ def main():
     args = parse_args()
 
     output_path = PROJECT_ROOT / "data" / "glomeruli"
+    if args.remove_context:
+        output_path = output_path / "masked"
+    else:
+        output_path = output_path / "masked"
     output_path.mkdir(parents=True, exist_ok=True)
 
     slides_path = args.slides_path

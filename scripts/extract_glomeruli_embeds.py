@@ -6,13 +6,11 @@ import numpy as np
 from PIL import Image
 from tqdm import tqdm
 
-from src.backbones.nasnet import NASNet
-
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-
+from src.backbones.nasnet import NASNet
 from src.backbones.dinov2 import DinoV2ModelName, DinoV2
 from src.backbones.dinov3 import DinoV3ModelName, DinoV3
 
@@ -103,7 +101,7 @@ def main():
 
         case "nasnet":
             model = NASNet(
-                args.input_size if args.input_size else 331
+                args.input_size or 331
             )
 
         case _:
@@ -114,41 +112,57 @@ def main():
     output_dir = PROJECT_ROOT / "data" / "glomeruli" / "embeddings"
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    parts = [model_name, args.backbone_size]
-
+    parts = [model_name]
+    if getattr(args, "backbone_size", None) is not None:
+        parts.append(args.backbone_size)
     if model_name in ("dinov2", "dinov3"):
         parts.append(args.mode)
     parts.append("embeddings")
     filename = "_".join(parts) + ".npy"
 
     np_embeddings = output_dir / filename
+    print(f"Saving embeddings to {np_embeddings}")
     csv_file = output_dir / filename
 
-    image_paths = sorted(path for path in crops_dir.iterdir())
-
-    np_memmap = np.lib.format.open_memmap(
-        np_embeddings,
-        mode="w+",
-        dtype="float32",
-        shape=(len(image_paths), model.backbone.hidden_dim)
+    image_paths = sorted(
+        path for path in crops_dir.iterdir()
+        if path.is_file() and path.suffix.lower() == ".png"
     )
+
+    if np_embeddings.exists():
+        np_embeddings.unlink()
+    #np_memmap = np.lib.format.open_memmap(
+    #    np_embeddings,
+    #    mode="w+",
+    #    dtype="float32",
+    #    shape=(len(image_paths), model.hidden_dim)
+    #)
+
+    embeddings = np.empty(
+        shape=(len(image_paths), model.hidden_dim),
+        dtype="float32"
+    )
+
     with open(csv_file, mode="w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
         writer.writerow(["index", "image_path"])
 
-        for i, image_path in enumerate(tqdm(image_paths, desc=f"Extracting embeddings with {model_name}_{args.backbone_size}")):
+        for i, image_path in enumerate(tqdm(image_paths, desc=f"Extracting embeddings with {model_name}")):
             image = Image.open(image_path).convert("RGB")
 
-            embed = model(image, args.mode)
+            #embed = model(image, args.mode)
+            embed = model(image)
             embed = np.squeeze(embed)
 
-            if args.mode == "patch":
+            if getattr(args, "mode", None) == "patch":
                 embed = embed.mean(axis=0)
 
-            np_memmap[i] = embed
+            #np_memmap[i] = embed
+            embeddings[i] = embed
 
             writer.writerow([i, str(image_path)])
-    np_memmap.flush()
+    #np_memmap.flush()
+    np.save(np_embeddings, embeddings)
 
 if __name__ == "__main__":
     main()
