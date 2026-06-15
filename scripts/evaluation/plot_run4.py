@@ -5,8 +5,8 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 
-CSV_PATH = Path(__file__).parent.parent / "models" / "hpc-run-1742197" / "training_log.csv"
-OUT_DIR   = Path(__file__).parent.parent / "models" / "hpc-run-1742197"
+CSV_PATH = Path(__file__).parent.parent.parent / "models" / "hpc-run-1742197" / "training_log.csv"
+OUT_DIR   = Path(__file__).parent.parent.parent / "models" / "hpc-run-1742197"
 
 PHASE_SPLIT = 10   # first epoch of Phase 2 (fine-tuning)
 

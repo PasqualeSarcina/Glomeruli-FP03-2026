@@ -47,7 +47,7 @@ export LD_LIBRARY_PATH="$(find "$NVIDIA_DIR" -name lib -type d | tr '\n' ':')${L
 
 python -c "import tensorflow as tf; print('TF', tf.__version__); print('GPU', tf.config.list_physical_devices('GPU'))"
 
-python scripts/train_hpc.py "$DATASET" \
+python scripts/training/train_hpc.py "$DATASET" \
     --batch-size 8 \
     --loss-fn combined \
     --phase-1-epochs 10 --phase-1-lr 0.01 \

@@ -50,7 +50,7 @@ python -c "import tensorflow as tf; print('TF', tf.__version__); print('GPU', tf
 
 DB_PATH="$SIM/optuna_run5.db"
 
-python scripts/train_optuna.py "$DATASET" \
+python scripts/training/train_optuna.py "$DATASET" \
     --batch-size 8 \
     --n-trials "$N_TRIALS" \
     --storage "sqlite:///$DB_PATH" \

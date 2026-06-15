@@ -33,11 +33,11 @@ export LD_LIBRARY_PATH="$(find "$NVIDIA_DIR" -name lib -type d | tr '\n' ':')${L
 
 python -c "import tensorflow as tf; print('TF', tf.__version__); print('GPU', tf.config.list_physical_devices('GPU'))"
 
-python "$REPO/scripts/evaluate.py" "$RUN4_MODEL" "$DATASET/test" \
+python "$REPO/scripts/evaluation/evaluate.py" "$RUN4_MODEL" "$DATASET/test" \
     --batch-size 8 --label "run4-1742197" \
     --output-json "$RESULTS/test_metrics_run4.json"
 
-python "$REPO/scripts/evaluate.py" "$RUN6_MODEL" "$DATASET/test" \
+python "$REPO/scripts/evaluation/evaluate.py" "$RUN6_MODEL" "$DATASET/test" \
     --batch-size 8 --label "run6-1746763" \
     --output-json "$RESULTS/test_metrics_run6.json"
 

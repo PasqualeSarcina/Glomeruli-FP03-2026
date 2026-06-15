@@ -144,10 +144,3 @@ def unfreeze_encoder(model: keras.Model) -> None:
     """Unfreeze all layers. Call compile_segnet after to apply the change."""
     for layer in model.layers:
         layer.trainable = True
-
-
-def lr_step_decay(epoch: int, lr: float) -> float:
-    """Step decay x0.1 every 2 epochs. Pass to keras.callbacks.LearningRateScheduler."""
-    if (epoch + 1) % 2 == 0:
-        return lr * 0.1
-    return lr

@@ -7,7 +7,7 @@ class SegmentationDataset:
     """
     TF Dataset builder for SegNet training.
 
-    Expects the directory layout produced by scripts/preprocess_data.py:
+    Expects the directory layout produced by scripts/preprocessing/preprocess_data.py:
         root/
           img/   *.png   (400x400 RGB patches)
           mask/  *.png   (400x400 binary masks, 0=background 1=glomerulus)

@@ -54,7 +54,7 @@ mkdir -p "$RESULTS"
 # ---- Run 6: Run 4 recipe + regularization (dropout + brightness jitter) ----
 # Only difference vs Run 4 (1742197) is the two regularization knobs below,
 # so any change in test IoU is attributable to regularization.
-python scripts/train_hpc.py "$DATASET" \
+python scripts/training/train_hpc.py "$DATASET" \
     --batch-size 8 \
     --loss-fn combined \
     --phase-1-epochs 10 --phase-1-lr 0.01 \
@@ -70,14 +70,14 @@ echo "Training results saved to $RESULTS"
 
 # ---- Test-set evaluation (inference only; defensive so it can't abort the job) ----
 # New Run 6 model
-python scripts/evaluate.py "$SIM/models/best_model.keras" "$DATASET/test" \
+python scripts/evaluation/evaluate.py "$SIM/models/best_model.keras" "$DATASET/test" \
     --batch-size 8 --label "run6-$SLURM_JOB_ID" \
     --output-json "$SIM/models/test_metrics_run6.json" \
     || echo "WARN: Run 6 test evaluation failed"
 
 # Run 4 baseline model (lives under $HOME, not staged to scratch)
 if [ -f "$RUN4_MODEL" ]; then
-    python scripts/evaluate.py "$RUN4_MODEL" "$DATASET/test" \
+    python scripts/evaluation/evaluate.py "$RUN4_MODEL" "$DATASET/test" \
         --batch-size 8 --label "run4-1742197" \
         --output-json "$SIM/models/test_metrics_run4.json" \
         || echo "WARN: Run 4 baseline evaluation failed"
