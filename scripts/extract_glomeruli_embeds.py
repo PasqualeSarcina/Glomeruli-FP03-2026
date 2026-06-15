@@ -2,6 +2,8 @@ import argparse
 import csv
 from pathlib import Path
 import sys
+from typing import get_args
+
 import numpy as np
 from PIL import Image
 from tqdm import tqdm
@@ -38,7 +40,7 @@ def parse_args():
     dinov2_parser.add_argument(
         "--backbone-size",
         type=str,
-        choices=DinoV2ModelName,
+        choices=get_args(DinoV2ModelName),
         default="large",
         help="DINOv2 model name. Default: large.",
     )
@@ -50,7 +52,7 @@ def parse_args():
     dinov3_parser.add_argument(
         "--backbone-size",
         type=str,
-        choices=DinoV3ModelName,
+        choices=get_args(DinoV3ModelName),
         default="base",
         help="DINOv3 model name. Default: base",
     )
@@ -152,8 +154,10 @@ def main():
         for i, image_path in enumerate(tqdm(image_paths, desc=f"Extracting embeddings with {model_name}")):
             image = Image.open(image_path).convert("RGB")
 
-            #embed = model(image, args.mode)
-            embed = model(image)
+            if model_name in ("dinov2", "dinov3"):
+                embed = model(image, args.mode)
+            else:
+                embed = model(image)
             embed = np.squeeze(embed)
 
             if getattr(args, "mode", None) == "patch":

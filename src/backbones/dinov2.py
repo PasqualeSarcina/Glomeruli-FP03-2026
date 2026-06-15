@@ -28,6 +28,7 @@ class DinoV2:
 
         assert input_size % self.backbone.patch_size == 0, "Input size must be a multiple of 14"
         self.input_size = (input_size, input_size)
+        self.hidden_dim = self.backbone.hidden_dim
 
     def _preprocess_image(self, image: Image.Image) -> np.ndarray:
         image = image.convert("RGB").resize(self.input_size)

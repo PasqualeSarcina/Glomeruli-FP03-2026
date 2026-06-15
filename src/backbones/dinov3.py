@@ -47,6 +47,7 @@ class DinoV3:
         )
         self.input_size = (input_size, input_size)
         self.num_prefix_tokens = 1 + self.backbone.num_register_tokens
+        self.hidden_dim = self.backbone.hidden_dim
 
     def _preprocess_image(self, image: Image.Image) -> np.ndarray:
         image = image.convert("RGB").resize(self.input_size)
