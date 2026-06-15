@@ -223,5 +223,10 @@ __marimo__/
 raw_images
 data
 
+# HPC run artifacts (model checkpoints, datasets, job logs)
+models/
+dataset.zip
+slurm-*.out
+
 # Claude
 .claude/
