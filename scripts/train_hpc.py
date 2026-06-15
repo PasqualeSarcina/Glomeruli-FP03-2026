@@ -39,6 +39,14 @@ def parse_args() -> argparse.Namespace:
                         help="Full fine-tune epochs (encoder + decoder).")
     parser.add_argument("--phase-2-lr", type=float, default=0.001)
 
+    # Regularization / augmentation knobs (defaults reproduce Run 4 exactly).
+    parser.add_argument("--dropout-rate", type=float, default=0.0,
+                        help="Dropout after each decoder block. 0.0 disables (Run 4 behavior).")
+    parser.add_argument("--flip-horizontal", action="store_true",
+                        help="Add random horizontal flip to training augmentation.")
+    parser.add_argument("--brightness-delta", type=float, default=0.0,
+                        help="Max delta for random brightness jitter. 0.0 disables.")
+
     parser.add_argument(
         "--output-dir",
         type=Path,
@@ -54,6 +62,8 @@ def build_datasets(args: argparse.Namespace):
         batch_size=args.batch_size,
         shuffle=True,
         augment=True,
+        flip_horizontal=args.flip_horizontal,
+        brightness_delta=args.brightness_delta,
     ).build()
 
     val_ds = SegmentationDataset(
@@ -66,8 +76,13 @@ def build_datasets(args: argparse.Namespace):
     return train_ds, val_ds
 
 
-def make_callbacks(output_dir: Path, log_name: str, best_so_far: float = -float("inf")):
-    return [
+def make_callbacks(
+    output_dir: Path,
+    log_name: str,
+    best_so_far: float = -float("inf"),
+    early_stopping: bool = False,
+):
+    cbs = [
         keras.callbacks.ModelCheckpoint(
             str(output_dir / "best_model.keras"),
             save_best_only=True,
@@ -78,6 +93,17 @@ def make_callbacks(output_dir: Path, log_name: str, best_so_far: float = -float(
         ),
         keras.callbacks.CSVLogger(str(output_dir / log_name), append=True),
     ]
+    if early_stopping:
+        cbs.append(
+            keras.callbacks.EarlyStopping(
+                monitor="val_mean_io_u",
+                mode="max",
+                patience=5,
+                restore_best_weights=True,
+                verbose=1,
+            )
+        )
+    return cbs
 
 
 def main() -> None:
@@ -90,12 +116,18 @@ def main() -> None:
 
     train_ds, val_ds = build_datasets(args)
 
-    model = build_segnet_vgg19()
+    model = build_segnet_vgg19(dropout_rate=args.dropout_rate)
+
+    # Single shared MeanIoU instance across both phases. Without this, the
+    # second compile() creates a fresh MeanIoU which Keras auto-suffixes
+    # to "mean_io_u_1", and ModelCheckpoint(monitor="val_mean_io_u") silently
+    # stops saving in Phase 2 (the metric name no longer exists in logs).
+    miou = keras.metrics.MeanIoU(num_classes=2, sparse_y_pred=False)
 
     # ----- Phase 1: frozen encoder warm-up -----
     print(f"\n=== Phase 1: frozen encoder, lr={args.phase_1_lr}, {args.phase_1_epochs} epochs ===")
     freeze_encoder(model)
-    model = compile_segnet(model, initial_lr=args.phase_1_lr, loss_fn=args.loss_fn)
+    model = compile_segnet(model, initial_lr=args.phase_1_lr, loss_fn=args.loss_fn, miou_metric=miou)
     model.summary()
 
     history_phase_1 = model.fit(
@@ -112,14 +144,18 @@ def main() -> None:
 
     print(f"\n=== Phase 2: unfrozen, lr={args.phase_2_lr}, {args.phase_2_epochs} epochs ===")
     unfreeze_encoder(model)
-    model = compile_segnet(model, initial_lr=args.phase_2_lr, loss_fn=args.loss_fn)
+    model = compile_segnet(model, initial_lr=args.phase_2_lr, loss_fn=args.loss_fn, miou_metric=miou)
 
     history_phase_2 = model.fit(
         train_ds,
         validation_data=val_ds,
         epochs=args.phase_1_epochs + args.phase_2_epochs,
         initial_epoch=args.phase_1_epochs,
-        callbacks=make_callbacks(args.output_dir, "training_log.csv", best_so_far=phase_1_best),
+        callbacks=make_callbacks(
+            args.output_dir, "training_log.csv",
+            best_so_far=phase_1_best,
+            early_stopping=True,
+        ),
     )
 
     model.save(str(args.output_dir / "final_model.keras"))

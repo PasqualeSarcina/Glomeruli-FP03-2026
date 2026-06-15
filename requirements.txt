@@ -6,3 +6,4 @@ tqdm~=4.67.3
 openslide-bin~=4.0.0.13
 openslide-python~=1.4.3
 tensorflow~=2.21.0
+optuna~=4.3.0

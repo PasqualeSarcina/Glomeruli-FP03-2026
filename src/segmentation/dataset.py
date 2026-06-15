@@ -27,11 +27,15 @@ class SegmentationDataset:
         batch_size: int = 4,
         shuffle: bool = True,
         augment: bool = False,
+        flip_horizontal: bool = False,
+        brightness_delta: float = 0.0,
     ):
         self.root = Path(root)
         self.batch_size = batch_size
         self.shuffle = shuffle
         self.augment = augment
+        self.flip_horizontal = flip_horizontal
+        self.brightness_delta = brightness_delta
 
         image_paths = sorted((self.root / "img").glob("*.png"))
         mask_paths = sorted((self.root / "mask").glob("*.png"))
@@ -95,17 +99,19 @@ class SegmentationDataset:
         image = tf.image.rot90(image, k=k)
         mask = tf.image.rot90(mask, k=k)
 
-        do_flip = tf.random.uniform([]) > 0.5
-        image = tf.cond(
-            do_flip,
-            lambda: tf.image.flip_up_down(image),
-            lambda: image,
-        )
-        mask = tf.cond(
-            do_flip,
-            lambda: tf.image.flip_up_down(mask),
-            lambda: mask,
-        )
+        do_flip_v = tf.random.uniform([]) > 0.5
+        image = tf.cond(do_flip_v, lambda: tf.image.flip_up_down(image), lambda: image)
+        mask  = tf.cond(do_flip_v, lambda: tf.image.flip_up_down(mask),  lambda: mask)
+
+        if self.flip_horizontal:
+            do_flip_h = tf.random.uniform([]) > 0.5
+            image = tf.cond(do_flip_h, lambda: tf.image.flip_left_right(image), lambda: image)
+            mask  = tf.cond(do_flip_h, lambda: tf.image.flip_left_right(mask),  lambda: mask)
+
+        if self.brightness_delta > 0.0:
+            image = tf.image.random_brightness(image, max_delta=self.brightness_delta)
+            image = tf.clip_by_value(image, 0.0, 1.0)
+
         return image, mask
 
     def __len__(self) -> int:

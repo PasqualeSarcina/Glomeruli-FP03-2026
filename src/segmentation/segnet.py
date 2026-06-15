@@ -6,6 +6,7 @@ from keras import layers
 def build_segnet_vgg19(
     input_shape: tuple = (384, 384, 3),
     num_classes: int = 2,
+    dropout_rate: float = 0.0,
 ) -> keras.Model:
     """
     SegNet-VGG19 encoder-decoder for glomerulus segmentation.
@@ -31,11 +32,11 @@ def build_segnet_vgg19(
 
     e5 = vgg19.get_layer("block5_pool").output
 
-    x = _decoder_block(e5, filters=512, name="dec5")
-    x = _decoder_block(x,  filters=512, name="dec4")
-    x = _decoder_block(x,  filters=256, name="dec3")
-    x = _decoder_block(x,  filters=128, name="dec2")
-    x = _decoder_block(x,  filters=64,  name="dec1")
+    x = _decoder_block(e5, filters=512, name="dec5", dropout_rate=dropout_rate)
+    x = _decoder_block(x,  filters=512, name="dec4", dropout_rate=dropout_rate)
+    x = _decoder_block(x,  filters=256, name="dec3", dropout_rate=dropout_rate)
+    x = _decoder_block(x,  filters=128, name="dec2", dropout_rate=dropout_rate)
+    x = _decoder_block(x,  filters=64,  name="dec1", dropout_rate=dropout_rate)
 
     outputs = keras.layers.Conv2D(
         num_classes,
@@ -48,7 +49,7 @@ def build_segnet_vgg19(
     return model
 
 
-def _decoder_block(x: tf.Tensor, filters: int, name: str) -> tf.Tensor:
+def _decoder_block(x: tf.Tensor, filters: int, name: str, dropout_rate: float = 0.0) -> tf.Tensor:
     x = layers.UpSampling2D(size=(2, 2), name=f"{name}_up")(x)
     x = layers.Conv2D(filters, (3, 3), padding="same", name=f"{name}_conv1")(x)
     x = layers.BatchNormalization(name=f"{name}_bn1")(x)
@@ -56,6 +57,8 @@ def _decoder_block(x: tf.Tensor, filters: int, name: str) -> tf.Tensor:
     x = layers.Conv2D(filters, (3, 3), padding="same", name=f"{name}_conv2")(x)
     x = layers.BatchNormalization(name=f"{name}_bn2")(x)
     x = layers.ReLU(name=f"{name}_relu2")(x)
+    if dropout_rate > 0.0:
+        x = layers.Dropout(dropout_rate, name=f"{name}_drop")(x)
     return x
 
 
@@ -95,6 +98,7 @@ def compile_segnet(
     model: keras.Model,
     initial_lr: float = 0.01,
     loss_fn: str = "combined",
+    miou_metric: keras.metrics.MeanIoU | None = None,
 ) -> keras.Model:
     """
     Compile SegNet with SGD + momentum.
@@ -103,10 +107,11 @@ def compile_segnet(
     initial_lr default is 0.01 — the original 0.1 delayed val IoU
     improvement to epoch 5 in the first training run.
 
-    SGD + momentum is used over Adam following Bueno et al. (2020):
-    more stable convergence under heavy class imbalance.
-    MeanIoU is tracked alongside accuracy because accuracy is
-    misleading when background pixels dominate each patch.
+    miou_metric: pass a shared MeanIoU instance to keep the same metric
+    name (e.g. val_mean_io_u) across multiple compile() calls. Without
+    this, Keras dedupes by name on re-compile and suffixes the new one
+    (mean_io_u_1), which breaks ModelCheckpoint(monitor=...) in two-phase
+    training. If None, a fresh instance is created (single-phase usage).
     """
     optimizer = keras.optimizers.SGD(
         learning_rate=initial_lr,
@@ -116,10 +121,13 @@ def compile_segnet(
 
     loss = combined_loss if loss_fn == "combined" else "sparse_categorical_crossentropy"
 
+    if miou_metric is None:
+        miou_metric = keras.metrics.MeanIoU(num_classes=2, sparse_y_pred=False)
+
     model.compile(
         optimizer=optimizer,
         loss=loss,
-        metrics=["accuracy", keras.metrics.MeanIoU(num_classes=2, sparse_y_pred=False)],
+        metrics=["accuracy", miou_metric],
     )
 
     return model
