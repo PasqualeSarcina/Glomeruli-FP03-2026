@@ -13,8 +13,8 @@ if str(PROJECT_ROOT) not in sys.path:
 from src.data.crop_glomeruli import crop_glomeruli
 from src.data.extract_masks import parse_xml_annotations
 
-target_mean = np.array([68.0, 9.0, 5.0], dtype=np.float32)
-target_std  = np.array([14.0, 5.0, 4.0], dtype=np.float32)
+target_mean = np.array([68.0, 10.0, 6.0], dtype=np.float32)
+target_std  = np.array([16.0, 7.0, 6.0], dtype=np.float32)
 
 
 def parse_args() -> argparse.Namespace:
@@ -51,10 +51,6 @@ def main():
     args = parse_args()
 
     output_path = PROJECT_ROOT / "data" / "glomeruli"
-    if args.remove_context:
-        output_path = output_path / "masked"
-    else:
-        output_path = output_path / "unmasked"
     output_path.mkdir(parents=True, exist_ok=True)
 
     slides_path = args.slides_path
