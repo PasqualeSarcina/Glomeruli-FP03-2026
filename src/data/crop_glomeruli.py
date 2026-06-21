@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import Literal
 
 import numpy as np
 import openslide
@@ -92,29 +93,63 @@ def crop_glomeruli(
         slide_path: Path,
         polygons: list[np.ndarray],
         margin: int,
-        remove_context: bool,
-        apply_color_normalization: bool = False,
-        target_mean: np.ndarray | None = None,
-        target_std: np.ndarray | None = None,
-) -> list[Image.Image]:
+        reinhard_target: tuple[np.ndarray, np.ndarray] | None = None,
+        normalization_scope: Literal["glomerulus", "tissue"] = "glomerulus",
+) -> list[tuple[Image.Image, Image.Image]]:
     """
-    Crop glomeruli from a WSI based on their polygon annotations.
+    Crop glomeruli from a WSI based on polygon annotations.
 
-    If apply_color_normalization is True, Reinhard normalization is applied
-    only inside the glomerulus polygon when remove_context is True, otherwise
-    it is applied to all tissue pixels in the crop.
+    Returns:
+        list of (crop_image, mask_image)
 
-    When remove_context is True, source statistics are computed from the
-    glomerulus polygon. Otherwise, they are computed from all tissue pixels
-    in the crop, excluding the light background.
+    crop_image:
+        RGB crop extracted from the WSI.
 
-    If remove_context is True, everything outside the polygon is set to black.
+    mask_image:
+        binary mask of the glomerulus in the crop.
+        white = glomerulus
+        black = background
+
+    If reinhard_target is not None, Reinhard color normalization is applied.
+
+    reinhard_target:
+        None
+            No color normalization.
+
+        (target_mean, target_std)
+            Apply Reinhard normalization using the provided target statistics.
+
+    normalization_scope:
+        "glomerulus"
+            Source statistics are computed only inside the glomerulus polygon.
+
+        "tissue"
+            Source statistics are computed on all tissue pixels in the crop,
+            excluding the light background.
     """
 
     slide = openslide.OpenSlide(str(slide_path))
     slide_width, slide_height = slide.dimensions
 
-    crops = []
+    results = []
+
+    apply_reinhard_normalization = reinhard_target is not None
+
+    if apply_reinhard_normalization:
+        target_mean, target_std = reinhard_target
+
+        target_mean = np.asarray(target_mean, dtype=np.float32)
+        target_std = np.asarray(target_std, dtype=np.float32)
+
+        if target_mean.shape != (3,):
+            raise ValueError(
+                f"target_mean must have shape (3,), got {target_mean.shape}."
+            )
+
+        if target_std.shape != (3,):
+            raise ValueError(
+                f"target_std must have shape (3,), got {target_std.shape}."
+            )
 
     for polygon in polygons:
         x_min, y_min, x_max, y_max = _compute_bounding_box(
@@ -141,31 +176,38 @@ def crop_glomeruli(
         polygon_mask = polygon_to_mask(
             image_size=crop.size,
             polygon_local=polygon_local
+        ).astype(bool)
+
+        mask_image = Image.fromarray(
+            (polygon_mask.astype(np.uint8) * 255),
+            mode="L"
         )
 
         if polygon_mask.sum() == 0:
             print(f"Warning: empty polygon mask for slide {slide_path.stem}")
-            crops.append(crop)
+            results.append((crop, mask_image))
             continue
 
-        # Reinhard sul polygon se il contesto verrà rimosso, altrimenti
-        # sul tessuto dell'intero crop escludendo lo sfondo chiaro.
-        if apply_color_normalization:
-            if target_mean is None or target_std is None:
-                raise ValueError(
-                    "target_mean and target_std must be provided when "
-                    "apply_color_normalization=True."
-                )
-
+        if apply_reinhard_normalization:
             rgb = np.array(crop).astype(np.float32) / 255.0
             lab = color.rgb2lab(rgb)
 
-            normalization_mask = polygon_mask
-            if not remove_context:
+            if normalization_scope == "glomerulus":
+                normalization_mask = polygon_mask
+
+            elif normalization_scope == "tissue":
+                # Escludo lo sfondo chiaro del vetrino
                 normalization_mask = rgb.mean(axis=2) < 0.85
 
                 if normalization_mask.sum() == 0:
                     normalization_mask = polygon_mask
+
+            else:
+                raise ValueError(
+                    "normalization_scope must be either 'glomerulus' or 'tissue'."
+                )
+
+            normalization_mask = normalization_mask.astype(bool)
 
             lab_tissue = lab[normalization_mask]
 
@@ -184,14 +226,8 @@ def crop_glomeruli(
                 tissue_mask_patch=normalization_mask,
             )
 
-        # Nero fuori dal polygon
-        if remove_context:
-            crop_array = np.array(crop).copy()
-            crop_array[~polygon_mask] = 0
-            crop = Image.fromarray(crop_array)
-
-        crops.append(crop)
+        results.append((crop, mask_image))
 
     slide.close()
 
-    return crops
+    return results

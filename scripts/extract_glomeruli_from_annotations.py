@@ -3,6 +3,7 @@ from pathlib import Path
 import sys
 
 import numpy as np
+from PIL import Image
 from tqdm import tqdm
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -36,12 +37,6 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=1024,
         help="Size of the square images of glomeruli after resizing. Default: 1024.",
-    )
-    parser.add_argument(
-        "--remove-context",
-        action=argparse.BooleanOptionalAction,
-        default=True,
-        help="Whether or not to remove the tissue around glomeruli annotations. Default: True.",
     )
     parser.add_argument(
         "--margin",
@@ -86,16 +81,38 @@ def main():
 
         # Extract glomeruli crops and save them to output_path
         polygons = parse_xml_annotations(xml_path)
-        crops = crop_glomeruli(slide_path, polygons, args.margin, args.remove_context, apply_color_normalization=True,
-                               target_mean=target_mean, target_std=target_std)
 
-        name_counter = 0
-        for crop in crops:
-            crop = crop.resize((args.images_size, args.images_size))
+        items = crop_glomeruli(
+            slide_path,
+            polygons,
+            args.margin,
+            (target_mean, target_std),
+        )
 
-            crop_output_path = output_path / f"{slide_name}_{name_counter}.png"
+        crops_output_path = output_path / "crops"
+        masks_output_path = output_path / "masks"
+
+        crops_output_path.mkdir(parents=True, exist_ok=True)
+        masks_output_path.mkdir(parents=True, exist_ok=True)
+
+        for name_counter, (crop, mask) in enumerate(items):
+            crop = crop.resize(
+                (args.images_size, args.images_size),
+                resample=Image.Resampling.LANCZOS
+            )
+
+            mask = mask.resize(
+                (args.images_size, args.images_size),
+                resample=Image.Resampling.NEAREST
+            )
+
+            file_stem = f"{slide_name}_{name_counter:04d}"
+
+            crop_output_path = crops_output_path / f"{file_stem}.png"
+            mask_output_path = masks_output_path / f"{file_stem}_mask.png"
+
             crop.save(crop_output_path)
-            name_counter += 1
+            mask.save(mask_output_path)
 
 
 if __name__ == "__main__":
