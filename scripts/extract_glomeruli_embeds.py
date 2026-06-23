@@ -1,5 +1,6 @@
 import argparse
 import csv
+from itertools import repeat
 from pathlib import Path
 import sys
 from typing import get_args
@@ -41,7 +42,7 @@ def parse_args():
         "--backbone-size",
         type=str,
         choices=get_args(DinoV2ModelName),
-        default="large",
+        default="base",
         help="DINOv2 model name. Default: large.",
     )
 
@@ -68,9 +69,9 @@ def parse_args():
     )
 
     parser.add_argument(
-        "crops_dir",
+        "glomeruli_dir",
         type=Path,
-        help="Directory containing .png glomeruli crops.",
+        help="Directory containing glomeruli crops (and masks).",
     )
 
     parser.add_argument(
@@ -84,10 +85,28 @@ def parse_args():
 
     return parser.parse_args()
 
+
 def main():
     args = parse_args()
 
     model_name = args.backbone
+
+    crops_dir = args.glomeruli_dir / "crops"
+    if not crops_dir.is_dir():
+        raise NotADirectoryError(f"Crops directory not found: {crops_dir}")
+
+    image_paths = sorted(
+        path for path in crops_dir.iterdir()
+        if path.is_file() and path.suffix.lower() == ".png"
+    )
+
+    masks_dir = args.glomeruli_dir / "masks"
+    masks_paths = sorted(
+        path for path in masks_dir.iterdir()
+        if path.is_file() and path.suffix.lower() == ".png"
+    )
+
+
     match model_name:
         case "dinov2":
             model = DinoV2(
@@ -109,8 +128,6 @@ def main():
         case _:
             raise ValueError(f"Invalid backbone: {model_name}")
 
-    crops_dir = args.crops_dir
-    assert crops_dir.exists()
     output_dir = PROJECT_ROOT / "data" / "glomeruli" / "embeddings"
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -119,7 +136,10 @@ def main():
         parts.append(args.backbone_size)
     if model_name in ("dinov2", "dinov3"):
         parts.append(args.mode)
-    parts.append(str(Path(crops_dir).stem))
+    if model_name == "dinov2":
+        parts.append("masked")
+    else:
+        parts.append(str(Path(crops_dir).stem))
     parts.append("embeddings")
     filename_stem = "_".join(parts)
 
@@ -127,11 +147,6 @@ def main():
     print(f"Saving embeddings to {np_embeddings}")
     csv_file = output_dir / f"{filename_stem}.csv"
     print(f"Saving image paths to {csv_file}")
-
-    image_paths = sorted(
-        path for path in crops_dir.iterdir()
-        if path.is_file() and path.suffix.lower() == ".png"
-    )
 
     if np_embeddings.exists():
         np_embeddings.unlink()
@@ -151,17 +166,42 @@ def main():
         writer = csv.writer(f)
         writer.writerow(["index", "image_path"])
 
-        for i, image_path in enumerate(tqdm(image_paths, desc=f"Extracting embeddings with {model_name}")):
-            image = Image.open(image_path).convert("RGB")
+        image_mask_pairs = zip(
+            image_paths,
+            masks_paths if masks_paths is not None else repeat(None),
+        )
+        progress = tqdm(
+            image_mask_pairs,
+            total=len(image_paths),
+            desc=f"Extracting embeddings with {model_name}",
+        )
 
-            if model_name in ("dinov2", "dinov3"):
+        for i, (image_path, mask_path) in enumerate(progress):
+            with Image.open(image_path) as loaded_image:
+                image = loaded_image.convert("RGB")
+
+            if model_name == "dinov2":
+                embed = model(image, args.mode, mask=mask_path)
+            elif model_name == "dinov3":
                 embed = model(image, args.mode)
             else:
                 embed = model(image)
-            embed = np.squeeze(embed)
 
             if getattr(args, "mode", None) == "patch":
+                embed = np.asarray(embed)
+                if embed.ndim != 2:
+                    raise ValueError(
+                        f"Expected 2D patch embeddings for {image_path}, "
+                        f"got shape {embed.shape}."
+                    )
+                if embed.shape[0] == 0:
+                    raise ValueError(
+                        f"No patch tokens selected by mask for {image_path} "
+                        f"({mask_path})."
+                    )
                 embed = embed.mean(axis=0)
+            else:
+                embed = np.squeeze(embed)
 
             #np_memmap[i] = embed
             embeddings[i] = embed
