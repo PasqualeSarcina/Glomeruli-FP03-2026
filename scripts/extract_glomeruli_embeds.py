@@ -35,7 +35,7 @@ def parse_args():
     )
     dinov2_parser.add_argument(
         "--mode",
-        choices=["cls", "patch"],
+        choices=["cls", "patch", "both"],
         required=True,
     )
     dinov2_parser.add_argument(
@@ -43,7 +43,7 @@ def parse_args():
         type=str,
         choices=get_args(DinoV2ModelName),
         default="base",
-        help="DINOv2 model name. Default: large.",
+        help="DINOv2 model name. Default: base.",
     )
 
     dinov3_parser = subparsers.add_parser(
@@ -111,7 +111,8 @@ def main():
         case "dinov2":
             model = DinoV2(
                 args.backbone_size,
-                args.input_size
+                args.input_size,
+                args.mode
             )
 
         case "dinov3":
@@ -137,7 +138,8 @@ def main():
     if model_name in ("dinov2", "dinov3"):
         parts.append(args.mode)
     if model_name == "dinov2":
-        parts.append("masked")
+        #parts.append("masked")
+        pass
     else:
         parts.append(str(Path(crops_dir).stem))
     parts.append("embeddings")
@@ -177,34 +179,10 @@ def main():
         )
 
         for i, (image_path, mask_path) in enumerate(progress):
-            with Image.open(image_path) as loaded_image:
-                image = loaded_image.convert("RGB")
+            image = Image.open(image_path).convert("RGB")
+            mask = Image.open(mask_path).convert("RGB")
 
-            if model_name == "dinov2":
-                embed = model(image, args.mode, mask=mask_path)
-            elif model_name == "dinov3":
-                embed = model(image, args.mode)
-            else:
-                embed = model(image)
-
-            if getattr(args, "mode", None) == "patch":
-                embed = np.asarray(embed)
-                if embed.ndim != 2:
-                    raise ValueError(
-                        f"Expected 2D patch embeddings for {image_path}, "
-                        f"got shape {embed.shape}."
-                    )
-                if embed.shape[0] == 0:
-                    raise ValueError(
-                        f"No patch tokens selected by mask for {image_path} "
-                        f"({mask_path})."
-                    )
-                embed = embed.mean(axis=0)
-            else:
-                embed = np.squeeze(embed)
-
-            #np_memmap[i] = embed
-            embeddings[i] = embed
+            embeddings[i] = model(image, mask)
 
             writer.writerow([i, str(image_path)])
     #np_memmap.flush()

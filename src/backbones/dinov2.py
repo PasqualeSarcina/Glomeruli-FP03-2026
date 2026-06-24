@@ -1,11 +1,13 @@
 from os import PathLike
 from typing import Literal
-
+import tensorflow as tf
 import PIL
 import keras
 import keras_hub
 import numpy as np
 from PIL import Image
+
+from src.backbones.backbone import Backbone
 
 ImageSource = Image.Image | str | PathLike[str]
 
@@ -16,11 +18,12 @@ DinoV2ModelName = Literal[
     "giant"
 ]
 
-class DinoV2:
+class DinoV2(Backbone):
     def __init__(
             self,
             model_name: DinoV2ModelName,
-            input_size
+            input_size,
+            mode: Literal["cls", "patch", "both"]
     ):
         backbone = keras_hub.models.DINOV2Backbone.from_preset(
             "dinov2_" + model_name,
@@ -29,96 +32,137 @@ class DinoV2:
         backbone.trainable = False
         self.backbone = backbone
 
-        assert input_size % self.backbone.patch_size == 0, "Input size must be a multiple of 14"
-        self.input_size = (input_size, input_size)
-        self.hidden_dim = self.backbone.hidden_dim
+        assert input_size % backbone.patch_size == 0, "Input size must be a multiple of 14"
+        hidden_dim = backbone.hidden_dim
+        if mode == "both":
+            hidden_dim *= 2
 
-        self.imagenet_mean = np.array([0.485, 0.456, 0.406], dtype=np.float32)
-        self.imagenet_std = np.array([0.229, 0.224, 0.225], dtype=np.float32)
-
-    @staticmethod
-    def _load_image(image: ImageSource) -> Image.Image:
-        if isinstance(image, Image.Image):
-            return image
-
-        with Image.open(image) as loaded_image:
-            return loaded_image.copy()
-
-    def _preprocess_mask(self, mask: ImageSource) -> Image.Image:
-        mask = self._load_image(mask).convert("L").resize(
-            self.input_size,
-            Image.Resampling.NEAREST,
-        )
-        mask_array = np.asarray(mask, dtype=np.uint8)
-        binary_mask = (mask_array > 127).astype(np.uint8) * 255
-        return Image.fromarray(binary_mask)
+        super().__init__(backbone, input_size, hidden_dim)
+        self.model_name = model_name
+        self.mode = mode
 
     def _preprocess_image(
             self,
-            image: ImageSource,
-            mask: Image.Image | None = None
-    ) -> np.ndarray:
-        image = self._load_image(image).convert("RGB").resize(self.input_size)
-        if mask is not None:
-            black_background = Image.new("RGB", self.input_size, (0, 0, 0))
-            image = Image.composite(image, black_background, mask)
-
-        array = keras.preprocessing.image.img_to_array(image).astype(np.float32)
-
-        # Scale to  [0, 1]
-        array = array / 255.0
-
-        # ImageNet norm
-        array = (array - self.imagenet_mean) / self.imagenet_std
-
-        expanded_array = np.expand_dims(array, axis=0)
-        return expanded_array
+            image: Image.Image
+    ):
+        image = image.convert("RGB")
+        image_converter = keras_hub.layers.DINOV2ImageConverter.from_preset("dinov2_" + self.model_name)
+        array = np.asarray(image, dtype=np.float32)
+        array = np.expand_dims(array, axis=0)
+        processed = image_converter(array)
+        return processed
 
     @staticmethod
-    def _get_cls_token(embedding: np.ndarray) -> np.ndarray:
-        cls_token = embedding[0, 0, :]
-        return cls_token
+    def _make_backbone_input(
+            processed_image
+    ):
+        return {
+            "images": processed_image
+        }
 
-    def _get_patch_embedding(
+    def _masked_mean_from_patch_tokens(
             self,
-            embedding: np.ndarray,
-            mask: Image.Image | None = None
-    ) -> np.ndarray:
-        patch_embedding = embedding[0, 1:, :]
-        if mask is None:
-            return patch_embedding
+            patch_tokens,
+            mask: Image.Image,
+    ):
+        """
+        Calcola la media pesata dei patch token usando una maschera PIL.
 
+        patch_tokens:
+            Tensor senza CLS token.
+            Shape attesa: [B, N, D]
+
+        mask:
+            PIL Image della maschera del glomerulo.
+            Deve avere la stessa dimensione dell'immagine vista dalla backbone.
+
+        patch_size:
+            Dimensione del patch della ViT.
+            Per DINOv2 ViT/14: patch_size = 14.
+
+        Ritorna:
+            weight_map:
+                Tensor [1, Gh, Gw]
+        """
+
+        EPS = 1e-6
+
+        patch_tokens = tf.convert_to_tensor(patch_tokens, dtype=tf.float32)
+
+        if len(patch_tokens.shape) != 3:
+            raise ValueError(
+                "patch_tokens deve avere shape [B, N, D]. "
+                "Il CLS token deve essere già stato rimosso."
+            )
+
+        num_tokens = int(patch_tokens.shape[1])
         patch_size = self.backbone.patch_size
-        mask_array = np.asarray(mask, dtype=bool)
-        grid_height = mask_array.shape[0] // patch_size
-        grid_width = mask_array.shape[1] // patch_size
-        patch_mask = mask_array.reshape(
-            grid_height,
-            patch_size,
-            grid_width,
-            patch_size,
-        ).any(axis=(1, 3)).reshape(-1)
+        grid_h = self.input_size // patch_size
+        grid_w = self.input_size // patch_size
+        if grid_h * grid_w != num_tokens:
+            raise ValueError(
+                f"Mask token grid {grid_h}x{grid_w} does not match "
+                f"{num_tokens} patch tokens."
+            )
 
-        patch_mask = patch_mask >= 0.3
-        patch_embedding = patch_embedding[patch_mask]
-        return patch_embedding
+        # PIL mask -> array [H, W]
+        mask = mask.convert("L").resize(
+            (self.input_size, self.input_size),
+            Image.Resampling.NEAREST,
+        )
+        mask_array = np.asarray(mask, dtype=np.float32)
 
-    def __call__(
+        # Binarizzazione: tutto ciò che è > 0 diventa glomerulo
+        mask_array = (mask_array > 0).astype(np.float32)
+
+        # [H, W] -> [1, H, W, 1]
+        mask_tensor = tf.convert_to_tensor(mask_array, dtype=tf.float32)
+        mask_tensor = tf.expand_dims(mask_tensor, axis=0)
+        mask_tensor = tf.expand_dims(mask_tensor, axis=-1)
+
+        # Maschera pixel-level -> maschera token-level
+        # Ogni valore è la frazione di copertura del token.
+        weight_map = tf.image.resize(
+            mask_tensor,
+            size=(grid_h, grid_w),
+            method="area",
+            antialias=False,
+        )
+
+        # [1, Gh, Gw, 1] -> [1, Gh, Gw]
+        weight_map = tf.squeeze(weight_map, axis=-1)
+
+        # [1, Gh, Gw] -> [1, N]
+        weights = tf.reshape(weight_map, [1, num_tokens])
+
+        # Se batch > 1, stessa maschera applicata a tutti gli elementi del batch
+        batch_size = tf.shape(patch_tokens)[0]
+        weights = tf.tile(weights, [batch_size, 1])
+
+        denominator = tf.reduce_sum(weights, axis=1, keepdims=True)
+        denominator = tf.maximum(denominator, EPS)
+
+        masked_mean = tf.reduce_sum(
+            patch_tokens * tf.expand_dims(weights, axis=-1),
+            axis=1,
+        ) / denominator
+
+        return masked_mean
+
+    def _postprocess(
             self,
-            image: ImageSource,
-            return_type: Literal["cls", "patch"],
-            mask: ImageSource | None = None
-    ) -> np.ndarray:
-        processed_mask = self._preprocess_mask(mask) if mask is not None else None
-        processed_image = self._preprocess_image(image, processed_mask)
-        features = self.backbone({"images": processed_image})
-        features = keras.ops.convert_to_numpy(features)
+            embedding,
+            mask
+    ):
+        if self.mode == "patch":
+            patch_tokens = embedding[:, 1:, :]
+            return self._masked_mean_from_patch_tokens(patch_tokens, mask)
 
-        if return_type == "cls":
-            cls_token = self._get_cls_token(features)
+        cls_token = embedding[:, 0, :]
+
+        if self.mode == "cls":
             return cls_token
-        elif return_type == "patch":
-            patch_embedding = self._get_patch_embedding(features, processed_mask)
-            return patch_embedding
-        else:
-            raise ValueError("return_type must be either 'cls' or 'patch'")
+
+        patch_tokens = embedding[:, 1:, :]
+        patch_mean = self._masked_mean_from_patch_tokens(patch_tokens, mask)
+        return tf.concat([patch_mean, cls_token], axis=-1)

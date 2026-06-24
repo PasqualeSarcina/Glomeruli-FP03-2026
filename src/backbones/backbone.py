@@ -16,34 +16,47 @@ class Backbone(ABC):
         self.input_size = input_size
         self.hidden_dim = hidden_dim
 
+    @abstractmethod
     def _preprocess_image(
             self,
             image: Image.Image,
-            mask: Image.Image | None = None,
-            mean: np.ndarray | None = None,
-            std: np.ndarray | None = None
+    ):
+        pass
+
+    @staticmethod
+    def _make_backbone_input(
+            processed_image
+    ):
+        """
+        Default for keras.applications:
+            self.backbone(processed_image, training=False)
+        """
+        return processed_image
+
+    def _forward(
+            self,
+            image: Image.Image
     ) -> np.ndarray:
-        image = image.convert("RGB").resize(self.input_size)
-        if mask is not None:
-            black_background = Image.new("RGB", self.input_size, (0, 0, 0))
-            image = Image.composite(image, black_background, mask)
+        preprocessed_image = self._preprocess_image(image)
+        input = self._make_backbone_input(preprocessed_image)
+        output = self.backbone(input)
 
-        array = keras.preprocessing.image.img_to_array(image).astype(np.float32)
+        return keras.ops.convert_to_numpy(output)
 
-        if mean is not None and std is not None:
-            # Scale to  [0, 1]
-            array = array / 255.0
+    def _postprocess(
+            self,
+            embedding,
+            mask
+    ):
+        return embedding
 
-            # ImageNet norm
-            array = (array - mean) / std
-
-        expanded_array = np.expand_dims(array, axis=0)
-        return expanded_array
-
-    @abstractmethod
-    def forward(
+    def __call__(
             self,
             image: Image.Image,
             mask: Image.Image | None = None,
-    ):
-        pass
+    ) -> np.ndarray:
+        preprocessed_image = self._preprocess_image(image)
+        input_array = self._make_backbone_input(preprocessed_image)
+        tensor = self.backbone(input_array)
+        output = self._postprocess(tensor, mask)
+        return output

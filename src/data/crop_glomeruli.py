@@ -223,7 +223,7 @@ def crop_glomeruli(
                 source_std=source_std,
                 target_mean=target_mean,
                 target_std=target_std,
-                tissue_mask_patch=normalization_mask,
+                #tissue_mask_patch=normalization_mask,
             )
 
         results.append((crop, mask_image))
