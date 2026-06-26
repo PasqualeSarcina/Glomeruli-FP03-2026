@@ -101,8 +101,7 @@ def apply_reinhard(
     lab = color.rgb2lab(rgb)
 
     if tissue_mask_patch is None:
-        gray = rgb.mean(axis=2)
-        tissue_mask = gray < 0.85
+        tissue_mask = np.ones(rgb.shape[:2], dtype=bool)
     else:
         tissue_mask = tissue_mask_patch > 0
 
