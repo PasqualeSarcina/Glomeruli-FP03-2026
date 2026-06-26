@@ -9,6 +9,8 @@ import numpy as np
 from PIL import Image
 from tqdm import tqdm
 
+
+
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
@@ -16,6 +18,7 @@ if str(PROJECT_ROOT) not in sys.path:
 from src.backbones.nasnet import NASNet
 from src.backbones.dinov2 import DinoV2ModelName, DinoV2
 from src.backbones.dinov3 import DinoV3ModelName, DinoV3
+from src.backbones.densenet169 import DenseNet169
 
 
 def parse_args():
@@ -59,13 +62,18 @@ def parse_args():
     )
     dinov3_parser.add_argument(
         "--mode",
-        choices=["cls", "patch"],
+        choices=["cls", "patch", "both"],
         required=True,
     )
 
     nasnet_parser = subparsers.add_parser(
         "nasnet",
         description="Extract glomeruli embeds using NASNet."
+    )
+
+    densenet_parser = subparsers.add_parser(
+        "densenet",
+        description="Extract glomeruli embeds using DenseNet169"
     )
 
     parser.add_argument(
@@ -118,12 +126,17 @@ def main():
         case "dinov3":
             model = DinoV3(
                 args.backbone_size,
-                args.input_size
+                args.input_size,
+                args.mode
             )
 
         case "nasnet":
             model = NASNet(
                 args.input_size or 331
+            )
+        case "densenet":
+            model = DenseNet169(
+                args.input_size or 224
             )
 
         case _:

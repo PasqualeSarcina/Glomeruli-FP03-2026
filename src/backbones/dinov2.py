@@ -9,8 +9,6 @@ from PIL import Image
 
 from src.backbones.backbone import Backbone
 
-ImageSource = Image.Image | str | PathLike[str]
-
 DinoV2ModelName = Literal[
     "small",
     "base",
