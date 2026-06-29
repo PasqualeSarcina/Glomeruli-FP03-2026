@@ -74,25 +74,6 @@ def evaluate_embedding_norms(
     high_outlier_mask = norms > high_threshold
 
     return {
-        "summary": {
-            "n_samples": int(embeddings.shape[0]),
-            "n_finite_norms": int(finite_norms.size),
-            "min": float(np.min(finite_norms)),
-            "p01": float(np.percentile(finite_norms, 1)),
-            "p05": float(np.percentile(finite_norms, 5)),
-            "q1": q1,
-            "median": float(np.median(finite_norms)),
-            "mean": float(np.mean(finite_norms)),
-            "std": float(np.std(finite_norms)),
-            "q3": q3,
-            "p95": float(np.percentile(finite_norms, 95)),
-            "p99": float(np.percentile(finite_norms, 99)),
-            "max": float(np.max(finite_norms)),
-            "iqr": float(iqr),
-            "near_zero_eps": float(near_zero_eps),
-            "low_outlier_threshold": float(low_threshold),
-            "high_outlier_threshold": float(high_threshold),
-        },
         "near_zero_indices": np.flatnonzero(near_zero_mask).astype(int).tolist(),
         "low_outlier_indices": np.flatnonzero(low_outlier_mask).astype(int).tolist(),
         "high_outlier_indices": np.flatnonzero(high_outlier_mask).astype(int).tolist(),
