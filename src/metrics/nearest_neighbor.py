@@ -4,26 +4,9 @@ from sklearn.neighbors import NearestNeighbors
 from sklearn.preprocessing import normalize
 
 
-def _skewness(x: np.ndarray) -> float:
-    """
-    Calcola la skewness senza dipendere da scipy.
-    """
-    x = np.asarray(x, dtype=np.float64)
-
-    mean = x.mean()
-    std = x.std(ddof=0)
-
-    if std == 0:
-        return 0.0
-
-    return float(np.mean(((x - mean) / std) ** 3))
-
-
 def _compute_knn_indices(
     X: np.ndarray,
     k_max: int,
-    #metric: str = "cosine",
-    #normalize_l2: bool = True,
 ) -> np.ndarray:
     """
     Calcola gli indici dei k-nearest-neighbor per ogni sample.
@@ -92,7 +75,7 @@ def mutual_nearest_neighbor_ratio(knn_indices: np.ndarray) -> float:
     return float(mutual_count / total_edges)
 
 
-def hubness_statistics(knn_indices: np.ndarray) -> dict:
+def hubness_statistics(knn_indices: np.ndarray):
     """
     Calcola statistiche di hubness.
 
@@ -105,14 +88,14 @@ def hubness_statistics(knn_indices: np.ndarray) -> dict:
         minlength=n_samples,
     )
 
-    return {
-        "hubness skew": _skewness(hubness_counts),
-        "max hubness": int(hubness_counts.max()),
-        "mean hubness": float(hubness_counts.mean()),
-        "std hubness": float(hubness_counts.std(ddof=0)),
-        "p95 hubness": float(np.percentile(hubness_counts, 95)),
-        "p99 hubness": float(np.percentile(hubness_counts, 99)),
-    }
+    hubness_counts_float = hubness_counts.astype(np.float64)
+    mean = hubness_counts_float.mean()
+    std = hubness_counts_float.std(ddof=0)
+    hubness_skew = 0.0 if std == 0 else float(
+        np.mean(((hubness_counts_float - mean) / std) ** 3)
+    )
+
+    return hubness_skew, int(hubness_counts.max())
 
 
 def evaluate_embedding_backbone(
@@ -149,12 +132,7 @@ def evaluate_embedding_backbone(
     """
     k_max = max(max(ks), hubness_k)
 
-    knn_indices = _compute_knn_indices(
-        X=X,
-        k_max=k_max,
-        #metric=metric,
-        #normalize_l2=normalize_l2,
-    )
+    knn_indices = _compute_knn_indices(X, k_max)
 
     results = {}
 
@@ -163,9 +141,7 @@ def evaluate_embedding_backbone(
         results[f"MNN@{k}"] = mutual_nearest_neighbor_ratio(knn_k)
 
     hubness_k_indices = knn_indices[:, :hubness_k]
-    hub_stats = hubness_statistics(hubness_k_indices)
 
-    results["hubness skew"] = hub_stats["hubness skew"]
-    results["max hubness"] = hub_stats["max hubness"]
+    results["hubness skew"], results["max hubness"] = hubness_statistics(hubness_k_indices)
 
     return pd.DataFrame([results])

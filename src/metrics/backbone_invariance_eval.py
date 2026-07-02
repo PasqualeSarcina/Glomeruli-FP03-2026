@@ -55,7 +55,6 @@ def embedding_to_1d_array(embedding) -> np.ndarray:
 def compute_augmentation_robustness_metrics(
     image_paths: Sequence[str | Path],
     embed_fn: Callable[[Image.Image], np.ndarray],
-    backbone_name: str,
     augmentations: Sequence[str] = ("rot90", "rot180", "rot270", "flip_h", "flip_v"),
     retrieval_ks: Sequence[int] = (5, 10, 20),
     subset_size: int | None = None,
@@ -159,7 +158,6 @@ def compute_augmentation_robustness_metrics(
     intra_nearest_inter_ratios = np.asarray(intra_nearest_inter_ratios)
 
     results = {
-        "Backbone": backbone_name,
         "median intra/nearest-inter ratio": float(
             np.median(intra_nearest_inter_ratios)
         ),

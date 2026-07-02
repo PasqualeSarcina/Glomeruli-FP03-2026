@@ -44,19 +44,10 @@ def compute_hopkins_dataframe(
 
     X = np.asarray(X, dtype=np.float64)
 
-    if X.ndim != 2:
-        raise ValueError("X deve essere un array 2D di shape (n_samples, n_features).")
-
     if not np.all(np.isfinite(X)):
         raise ValueError("X contiene NaN o infiniti.")
 
     n, d = X.shape
-
-    if n < 3:
-        raise ValueError("Servono almeno 3 campioni per calcolare Hopkins.")
-
-    if n_runs < 1:
-        raise ValueError("n_runs deve essere almeno 1.")
 
     if n_samples is None:
         n_samples_eff = int(np.ceil(sample_fraction * n))
