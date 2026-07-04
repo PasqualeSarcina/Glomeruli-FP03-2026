@@ -24,16 +24,22 @@ def show_clustering_samples(
     show: bool = True,
     save_path: str | Path | None = None,
     score_name: str = "p",
+    random_state: int | None = None,
+    selection: Literal["random", "highest_score", "lowest_score"] = "random",
 ) -> tuple[Figure, np.ndarray]:
     """
-    Show the first x images per cluster.
+    Show up to x images per cluster.
 
-    If probabilities is provided, samples are sorted by descending score.
+    selection:
+    - "random": random samples per cluster
+    - "highest_score": samples with highest score per cluster
+    - "lowest_score": samples with lowest score per cluster
 
-    probabilities can be:
-    - None: no sorting by probability/score
-    - 1D array: HDBSCAN probabilities, local purity, confidence score, etc.
-    - 2D array: GMM membership probabilities
+    For HDBSCAN:
+    - use probabilities_ with selection="highest_score" for representative samples
+    - use outlier_scores_ with selection="lowest_score" for non-outlier/clean samples
+    - use probabilities_ with selection="lowest_score" for borderline samples
+    - use outlier_scores_ with selection="highest_score" for anomalous samples
     """
 
     labels_array = np.asarray(labels)
@@ -55,12 +61,23 @@ def show_clustering_samples(
     if image_size <= 0:
         raise ValueError("image_size must be positive.")
 
+    if selection not in {"random", "highest_score", "lowest_score"}:
+        raise ValueError(
+            "selection must be one of: 'random', 'highest_score', 'lowest_score'."
+        )
+
     has_scores = probabilities is not None
+    rng = np.random.default_rng(random_state)
 
     assigned_scores = _assigned_cluster_probabilities(
         probabilities,
         labels_array,
     )
+
+    if selection != "random" and not has_scores:
+        raise ValueError(
+            "probabilities/scores must be provided when selection is not 'random'."
+        )
 
     cluster_labels = _cluster_labels(labels_array, include_noise)
 
@@ -78,17 +95,31 @@ def show_clustering_samples(
 
         cluster_indices = np.flatnonzero(labels_array == cluster_label)
 
-        if has_scores:
-            sorted_indices = cluster_indices[
-                np.argsort(
-                    -assigned_scores[cluster_indices],
-                    kind="stable",
-                )
-            ]
-        else:
-            sorted_indices = cluster_indices
+        if selection == "random":
+            selected_count = min(x, len(cluster_indices))
+            selected_indices = rng.choice(
+                cluster_indices,
+                size=selected_count,
+                replace=False,
+            )
 
-        selected_indices = sorted_indices[:x]
+        else:
+            cluster_scores = np.asarray(assigned_scores[cluster_indices], dtype=float)
+
+            valid_mask = np.isfinite(cluster_scores)
+            valid_indices = cluster_indices[valid_mask]
+            valid_scores = cluster_scores[valid_mask]
+
+            if len(valid_indices) == 0:
+                selected_indices = np.array([], dtype=int)
+            else:
+                order = np.argsort(valid_scores)
+
+                if selection == "highest_score":
+                    order = order[::-1]
+
+                selected_count = min(x, len(valid_indices))
+                selected_indices = valid_indices[order[:selected_count]]
 
         for column in range(x):
 

@@ -135,7 +135,7 @@ def _fit_umap_hdbscan(
 ):
     reducer = umap.UMAP(
         n_neighbors=int(n_neighbors),
-        min_dist=0.0,
+        min_dist=0.05,
         n_components=int(n_components),
         metric="cosine",
     )
@@ -167,6 +167,8 @@ def optimize_umap_hdbscan_n_components(
     min_clusters=6,
     max_clusters=12,
     max_noise=0.33,
+    min_valid_run_ratio=0.80,
+    min_mean_ari=0.70,
 ):
     """
     Ottimizza n_components di UMAP per una pipeline UMAP + HDBSCAN.
@@ -186,6 +188,10 @@ def optimize_umap_hdbscan_n_components(
     Una run e' valida se rispetta:
     - min_clusters <= numero cluster HDBSCAN <= max_clusters
     - noise_ratio <= max_noise
+
+    Un valore di n_components entra nella selezione finale solo se:
+    - valid_run_ratio >= min_valid_run_ratio
+    - mean_ari > min_mean_ari
 
     La selezione finale ordina per mean_dbcv decrescente e, a parita', per
     mean_ari decrescente, usando solo le run valide.
@@ -220,6 +226,8 @@ def optimize_umap_hdbscan_n_components(
     min_clusters = int(min_clusters)
     max_clusters = int(max_clusters)
     max_noise = float(max_noise)
+    min_valid_run_ratio = float(min_valid_run_ratio)
+    min_mean_ari = float(min_mean_ari)
 
     if min_clusters < 1:
         raise ValueError("min_clusters deve essere >= 1.")
@@ -230,11 +238,19 @@ def optimize_umap_hdbscan_n_components(
     if max_noise < 0.0 or max_noise > 1.0:
         raise ValueError("max_noise deve essere compreso tra 0.0 e 1.0.")
 
+    if min_valid_run_ratio < 0.0 or min_valid_run_ratio > 1.0:
+        raise ValueError(
+            "min_valid_run_ratio deve essere compreso tra 0.0 e 1.0."
+        )
+
+    if min_mean_ari < -1.0 or min_mean_ari > 1.0:
+        raise ValueError("min_mean_ari deve essere compreso tra -1.0 e 1.0.")
+
     n_neighbors = int(
         np.clip(
-            round(1.5 * np.sqrt(n_samples)),
-            15,
-            100,
+            round(1.0 * np.sqrt(n_samples)),
+            10,
+            min(80, n_samples - 1),
         )
     )
 
@@ -244,14 +260,8 @@ def optimize_umap_hdbscan_n_components(
             "uguale al numero di glomeruli."
         )
 
-    min_cluster_size = int(max(10, round(0.03 * n_samples)))
-    min_samples = int(
-        np.clip(
-            round(0.5 * min_cluster_size),
-            5,
-            30,
-        )
-    )
+    min_cluster_size = int(max(10, round(0.02 * n_samples)))
+    min_samples = int(np.clip(round(0.35 * min_cluster_size), 5, 20))
 
     if min_cluster_size > n_samples:
         raise ValueError(
@@ -366,6 +376,8 @@ def optimize_umap_hdbscan_n_components(
             "min_clusters": int(min_clusters),
             "max_clusters": int(max_clusters),
             "max_noise": float(max_noise),
+            "min_valid_run_ratio": float(min_valid_run_ratio),
+            "min_mean_ari": float(min_mean_ari),
             "mean_dbcv": _safe_mean(valid_dbcv_values),
             "std_dbcv": _safe_std(valid_dbcv_values),
             "mean_ari": mean_ari,
@@ -388,7 +400,18 @@ def optimize_umap_hdbscan_n_components(
         & np.isfinite(results_df["mean_ari"].to_numpy(dtype=float))
     )
 
-    selectable_results = results_df.loc[finite_selection_mask].copy()
+    results_df["valid_for_selection"] = (
+        finite_selection_mask
+        & (
+            results_df["valid_run_ratio"].to_numpy(dtype=float)
+            >= min_valid_run_ratio
+        )
+        & (results_df["mean_ari"].to_numpy(dtype=float) > min_mean_ari)
+    )
+
+    selectable_results = results_df.loc[
+        results_df["valid_for_selection"]
+    ].copy()
 
     if selectable_results.empty:
         return {
@@ -411,6 +434,8 @@ def optimize_umap_hdbscan_n_components(
                     "min_clusters": int(min_clusters),
                     "max_clusters": int(max_clusters),
                     "max_noise": float(max_noise),
+                    "min_valid_run_ratio": float(min_valid_run_ratio),
+                    "min_mean_ari": float(min_mean_ari),
                 },
             },
             "results": results_df,
@@ -441,6 +466,8 @@ def optimize_umap_hdbscan_n_components(
             "min_clusters": int(min_clusters),
             "max_clusters": int(max_clusters),
             "max_noise": float(max_noise),
+            "min_valid_run_ratio": float(min_valid_run_ratio),
+            "min_mean_ari": float(min_mean_ari),
         },
     }
 
@@ -450,8 +477,8 @@ def optimize_umap_hdbscan_n_components(
         "best_mean_ari": float(best_row["mean_ari"]),
         "best_params": best_params,
         "results": results_df.sort_values(
-            by=["mean_dbcv", "mean_ari"],
-            ascending=[False, False],
+            by=["valid_for_selection", "mean_dbcv", "mean_ari"],
+            ascending=[False, False, False],
         ).reset_index(drop=True),
         "run_details": run_details_df,
     }
