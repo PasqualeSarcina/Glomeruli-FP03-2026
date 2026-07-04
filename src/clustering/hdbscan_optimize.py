@@ -107,6 +107,35 @@ def _safe_std(values):
     return float(np.std(values))
 
 
+def _validate_metric_weight(name, value):
+    weight = float(value)
+
+    if not np.isfinite(weight):
+        raise ValueError(f"{name} deve essere un numero finito.")
+
+    if weight < 0.0:
+        raise ValueError(f"{name} deve essere >= 0.0.")
+
+    return weight
+
+
+def _weighted_metric_sum(weighted_values):
+    score = 0.0
+
+    for weight, value in weighted_values:
+        if weight == 0.0:
+            continue
+
+        value = float(value)
+
+        if not np.isfinite(value):
+            return np.nan
+
+        score += weight * value
+
+    return float(score)
+
+
 def _mean_pairwise_ari(labels_by_run):
     if len(labels_by_run) < 2:
         return np.nan, []
@@ -169,6 +198,9 @@ def optimize_umap_hdbscan_n_components(
     max_noise=0.33,
     min_valid_run_ratio=0.80,
     min_mean_ari=0.70,
+    dbcv_weight=1.0,
+    ari_weight=1.0,
+    valid_run_ratio_weight=1.0,
 ):
     """
     Ottimizza n_components di UMAP per una pipeline UMAP + HDBSCAN.
@@ -193,14 +225,19 @@ def optimize_umap_hdbscan_n_components(
     - valid_run_ratio >= min_valid_run_ratio
     - mean_ari > min_mean_ari
 
-    La selezione finale ordina per mean_dbcv decrescente e, a parita', per
-    mean_ari decrescente, usando solo le run valide.
+    La selezione finale ordina per combined_score decrescente, calcolato come:
+    dbcv_weight * mean_dbcv
+    + ari_weight * mean_ari
+    + valid_run_ratio_weight * valid_run_ratio.
+    A parita' vengono usati mean_dbcv, mean_ari e valid_run_ratio come
+    tie-breaker decrescenti.
 
     Returns
     -------
     output : dict
         Dizionario con:
         - best_n_components
+        - best_combined_score
         - best_mean_dbcv
         - best_mean_ari
         - best_params
@@ -228,6 +265,12 @@ def optimize_umap_hdbscan_n_components(
     max_noise = float(max_noise)
     min_valid_run_ratio = float(min_valid_run_ratio)
     min_mean_ari = float(min_mean_ari)
+    dbcv_weight = _validate_metric_weight("dbcv_weight", dbcv_weight)
+    ari_weight = _validate_metric_weight("ari_weight", ari_weight)
+    valid_run_ratio_weight = _validate_metric_weight(
+        "valid_run_ratio_weight",
+        valid_run_ratio_weight,
+    )
 
     if min_clusters < 1:
         raise ValueError("min_clusters deve essere >= 1.")
@@ -245,6 +288,15 @@ def optimize_umap_hdbscan_n_components(
 
     if min_mean_ari < -1.0 or min_mean_ari > 1.0:
         raise ValueError("min_mean_ari deve essere compreso tra -1.0 e 1.0.")
+
+    if (
+        dbcv_weight == 0.0
+        and ari_weight == 0.0
+        and valid_run_ratio_weight == 0.0
+    ):
+        raise ValueError(
+            "Almeno un peso della metrica combinata deve essere > 0.0."
+        )
 
     n_neighbors = int(
         np.clip(
@@ -359,17 +411,35 @@ def optimize_umap_hdbscan_n_components(
 
         mean_ari, ari_values = _mean_pairwise_ari(valid_labels_by_run)
         mean_ari_all, ari_values_all = _mean_pairwise_ari(labels_by_run)
+        valid_run_ratio = (
+            float(valid_runs / successful_runs)
+            if successful_runs > 0
+            else 0.0
+        )
+        mean_dbcv = _safe_mean(valid_dbcv_values)
+        std_dbcv = _safe_std(valid_dbcv_values)
+        std_ari = _safe_std(ari_values)
+        mean_n_clusters = _safe_mean(valid_n_cluster_values)
+        mean_noise_ratio = _safe_mean(valid_noise_ratio_values)
+        mean_dbcv_all = _safe_mean(dbcv_values)
+        std_dbcv_all = _safe_std(dbcv_values)
+        std_ari_all = _safe_std(ari_values_all)
+        mean_n_clusters_all = _safe_mean(n_cluster_values)
+        mean_noise_ratio_all = _safe_mean(noise_ratio_values)
+        combined_score = _weighted_metric_sum(
+            [
+                (dbcv_weight, mean_dbcv),
+                (ari_weight, mean_ari),
+                (valid_run_ratio_weight, valid_run_ratio),
+            ]
+        )
 
         results.append({
             "n_components": int(n_components),
             "n_runs": int(n_runs),
             "successful_runs": int(successful_runs),
             "valid_runs": int(valid_runs),
-            "valid_run_ratio": (
-                float(valid_runs / successful_runs)
-                if successful_runs > 0
-                else 0.0
-            ),
+            "valid_run_ratio": valid_run_ratio,
             "n_neighbors": int(n_neighbors),
             "min_cluster_size": int(min_cluster_size),
             "min_samples": int(min_samples),
@@ -378,26 +448,30 @@ def optimize_umap_hdbscan_n_components(
             "max_noise": float(max_noise),
             "min_valid_run_ratio": float(min_valid_run_ratio),
             "min_mean_ari": float(min_mean_ari),
-            "mean_dbcv": _safe_mean(valid_dbcv_values),
-            "std_dbcv": _safe_std(valid_dbcv_values),
+            "dbcv_weight": float(dbcv_weight),
+            "ari_weight": float(ari_weight),
+            "valid_run_ratio_weight": float(valid_run_ratio_weight),
+            "mean_dbcv": mean_dbcv,
+            "std_dbcv": std_dbcv,
             "mean_ari": mean_ari,
-            "std_ari": _safe_std(ari_values),
-            "mean_n_clusters": _safe_mean(valid_n_cluster_values),
-            "mean_noise_ratio": _safe_mean(valid_noise_ratio_values),
-            "mean_dbcv_all": _safe_mean(dbcv_values),
-            "std_dbcv_all": _safe_std(dbcv_values),
+            "std_ari": std_ari,
+            "mean_n_clusters": mean_n_clusters,
+            "mean_noise_ratio": mean_noise_ratio,
+            "combined_score": combined_score,
+            "mean_dbcv_all": mean_dbcv_all,
+            "std_dbcv_all": std_dbcv_all,
             "mean_ari_all": mean_ari_all,
-            "std_ari_all": _safe_std(ari_values_all),
-            "mean_n_clusters_all": _safe_mean(n_cluster_values),
-            "mean_noise_ratio_all": _safe_mean(noise_ratio_values),
+            "std_ari_all": std_ari_all,
+            "mean_n_clusters_all": mean_n_clusters_all,
+            "mean_noise_ratio_all": mean_noise_ratio_all,
         })
 
     results_df = pd.DataFrame(results)
     run_details_df = pd.DataFrame(run_details)
 
     finite_selection_mask = (
-        np.isfinite(results_df["mean_dbcv"].to_numpy(dtype=float))
-        & np.isfinite(results_df["mean_ari"].to_numpy(dtype=float))
+        np.isfinite(results_df["mean_ari"].to_numpy(dtype=float))
+        & np.isfinite(results_df["combined_score"].to_numpy(dtype=float))
     )
 
     results_df["valid_for_selection"] = (
@@ -416,6 +490,7 @@ def optimize_umap_hdbscan_n_components(
     if selectable_results.empty:
         return {
             "best_n_components": None,
+            "best_combined_score": np.nan,
             "best_mean_dbcv": np.nan,
             "best_mean_ari": np.nan,
             "best_params": {
@@ -437,14 +512,20 @@ def optimize_umap_hdbscan_n_components(
                     "min_valid_run_ratio": float(min_valid_run_ratio),
                     "min_mean_ari": float(min_mean_ari),
                 },
+                "selection": {
+                    "metric": "combined_score",
+                    "dbcv_weight": float(dbcv_weight),
+                    "ari_weight": float(ari_weight),
+                    "valid_run_ratio_weight": float(valid_run_ratio_weight),
+                },
             },
             "results": results_df,
             "run_details": run_details_df,
         }
 
     selectable_results = selectable_results.sort_values(
-        by=["mean_dbcv", "mean_ari"],
-        ascending=[False, False],
+        by=["combined_score", "mean_dbcv", "mean_ari", "valid_run_ratio"],
+        ascending=[False, False, False, False],
     )
 
     best_row = selectable_results.iloc[0]
@@ -469,16 +550,29 @@ def optimize_umap_hdbscan_n_components(
             "min_valid_run_ratio": float(min_valid_run_ratio),
             "min_mean_ari": float(min_mean_ari),
         },
+        "selection": {
+            "metric": "combined_score",
+            "dbcv_weight": float(dbcv_weight),
+            "ari_weight": float(ari_weight),
+            "valid_run_ratio_weight": float(valid_run_ratio_weight),
+        },
     }
 
     return {
         "best_n_components": best_n_components,
+        "best_combined_score": float(best_row["combined_score"]),
         "best_mean_dbcv": float(best_row["mean_dbcv"]),
         "best_mean_ari": float(best_row["mean_ari"]),
         "best_params": best_params,
         "results": results_df.sort_values(
-            by=["valid_for_selection", "mean_dbcv", "mean_ari"],
-            ascending=[False, False, False],
+            by=[
+                "valid_for_selection",
+                "combined_score",
+                "mean_dbcv",
+                "mean_ari",
+                "valid_run_ratio",
+            ],
+            ascending=[False, False, False, False, False],
         ).reset_index(drop=True),
         "run_details": run_details_df,
     }
