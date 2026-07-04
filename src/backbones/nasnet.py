@@ -3,7 +3,7 @@ import numpy as np
 from PIL import Image
 from tensorflow.keras.applications.nasnet import preprocess_input
 
-from backbones.backbone import Backbone
+from src.backbones.backbone import Backbone
 
 
 class NASNet(Backbone):
@@ -15,13 +15,13 @@ class NASNet(Backbone):
         
         backbone = keras.applications.NASNetLarge(
             include_top=False,
-            input_shape=(self.input_size, self.input_size, 3),
+            input_shape=(input_size, input_size, 3),
             weights="imagenet",
             pooling=None,
             name="nasnet_large",
         )
         backbone.trainable = False
-        hidden_dim = self.backbone.output_shape[-1]
+        hidden_dim = backbone.output_shape[-1]
         
         super().__init__(backbone, input_size, hidden_dim)
 

@@ -32,11 +32,14 @@ class DinoV3(Backbone):
     def __init__(
             self,
             model_name: DinoV3ModelName,
-            input_size,
+            input_size: int | None,
             mode: Literal["cls", "patch", "both"]
     ):
         if model_name not in _MODEL_PRESETS:
             raise ValueError(f"Invalid model name: {model_name}")
+
+        input_size = input_size or 224
+
         preset = _MODEL_PRESETS[model_name]
         backbone = keras_hub.models.DINOV3Backbone.from_preset(
             preset,
