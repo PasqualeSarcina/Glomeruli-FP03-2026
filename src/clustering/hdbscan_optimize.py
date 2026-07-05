@@ -1,41 +1,16 @@
 from __future__ import annotations
 
+from collections import Counter
 from itertools import combinations
-from typing import Iterable
 
 import hdbscan as hdbscan_lib
 import numpy as np
 import pandas as pd
 import umap
 
+from clustering.auto_param_grid import make_auto_param_grid
 from hdbscan.validity import validity_index
 from sklearn.metrics import adjusted_rand_score
-
-
-def _validate_n_components_values(n_components_values, n_features):
-    values = list(n_components_values)
-
-    if len(values) == 0:
-        raise ValueError("n_components_values non puo' essere vuoto.")
-
-    validated_values = []
-
-    for value in values:
-        n_components = int(value)
-
-        if n_components < 1:
-            raise ValueError("Ogni n_components deve essere >= 1.")
-
-        if n_components > n_features:
-            raise ValueError(
-                "Ogni n_components deve essere minore o uguale al numero di "
-                "componenti di ogni embedding."
-            )
-
-        if n_components not in validated_values:
-            validated_values.append(n_components)
-
-    return validated_values
 
 
 def _count_clusters_and_noise(labels):
@@ -59,7 +34,7 @@ def _check_cluster_constraints(
     if n_clusters < min_clusters:
         return False, "too_few_clusters"
 
-    if n_clusters > max_clusters:
+    if max_clusters is not None and n_clusters > max_clusters:
         return False, "too_many_clusters"
 
     if noise_ratio > max_noise:
@@ -105,6 +80,19 @@ def _safe_std(values):
         return np.nan
 
     return float(np.std(values))
+
+
+def _safe_mode_int(values):
+    values = [
+        int(value)
+        for value in values
+        if np.isfinite(float(value))
+    ]
+
+    if len(values) == 0:
+        return np.nan
+
+    return int(Counter(values).most_common(1)[0][0])
 
 
 def _validate_metric_weight(name, value):
@@ -159,12 +147,13 @@ def _fit_umap_hdbscan(
     embeddings,
     n_components,
     n_neighbors,
+    min_dist,
     min_cluster_size,
     min_samples,
 ):
     reducer = umap.UMAP(
         n_neighbors=int(n_neighbors),
-        min_dist=0.05,
+        min_dist=float(min_dist),
         n_components=int(n_components),
         metric="cosine",
     )
@@ -176,7 +165,8 @@ def _fit_umap_hdbscan(
     clusterer = hdbscan_lib.HDBSCAN(
         metric="euclidean",
         min_cluster_size=int(min_cluster_size),
-        min_samples=int(min_samples),
+        min_samples=None if min_samples is None else int(min_samples),
+        cluster_selection_method = "leaf"
     )
 
     labels = clusterer.fit_predict(X_umap)
@@ -189,54 +179,72 @@ def _fit_umap_hdbscan(
     }
 
 
-def optimize_umap_hdbscan_n_components(
+def optimize_umap_hdbscan_auto(
     embeddings,
-    n_components_values: Iterable[int],
     n_runs=10,
-    min_clusters=6,
-    max_clusters=12,
-    max_noise=0.33,
-    min_valid_run_ratio=0.80,
-    min_mean_ari=0.70,
-    dbcv_weight=1.0,
-    ari_weight=1.0,
-    valid_run_ratio_weight=1.0,
+    min_clusters=1,
+    max_clusters=None,
+    max_noise=0.50,
+    min_valid_run_ratio=0.60,
+    min_mean_ari=0.50,
+    dbcv_weight=0.35,
+    ari_weight=0.45,
+    valid_run_ratio_weight=0.15,
+    noise_weight=0.05,
+    max_auto_param_combinations=240,
 ):
     """
-    Ottimizza n_components di UMAP per una pipeline UMAP + HDBSCAN.
+    Ottimizza automaticamente una pipeline UMAP + HDBSCAN senza label.
 
-    L'input deve essere una matrice di embedding gia' normalizzati con
-    L2 + PCA95%, con una riga per ogni glomerulo.
+    L'input deve essere una matrice di embedding gia' preprocessati,
+    normalizzati/ridotti, con una riga per ogni glomerulo.
 
-    Parametri fissati:
-    - UMAP: min_dist=0.0, metric="cosine"
+    Parametri fissati della pipeline:
+    - UMAP: metric="cosine"
     - HDBSCAN: metric="euclidean"
 
-    Per ogni valore di n_components vengono eseguite n_runs senza impostare
-    random_state in UMAP. Il DBCV viene calcolato per ogni run sullo spazio
-    UMAP usato da HDBSCAN. L'ARI medio e' la media degli ARI pairwise tra le
-    label prodotte dalle run valide dello stesso n_components.
+    Viene sempre generata una griglia automatica da n_samples e n_features su:
+    - n_components
+    - n_neighbors
+    - min_dist
+    - min_cluster_size
+    - min_samples
+
+    Per ogni combinazione vengono eseguite n_runs senza impostare random_state
+    in UMAP. La stabilita' e' misurata con ARI pairwise tra le label delle run
+    valide della stessa combinazione. Il DBCV viene usato solo quando e'
+    definito, quindi per soluzioni a 1 cluster non diventa un vincolo
+    artificiale contro il collasso in pochi cluster.
 
     Una run e' valida se rispetta:
-    - min_clusters <= numero cluster HDBSCAN <= max_clusters
+    - numero cluster HDBSCAN >= min_clusters
+    - numero cluster HDBSCAN <= max_clusters, se max_clusters non e' None
     - noise_ratio <= max_noise
 
-    Un valore di n_components entra nella selezione finale solo se:
+    Una combinazione entra nella selezione finale solo se:
     - valid_run_ratio >= min_valid_run_ratio
-    - mean_ari > min_mean_ari
+    - mean_ari >= min_mean_ari
 
     La selezione finale ordina per combined_score decrescente, calcolato come:
-    dbcv_weight * mean_dbcv
+    dbcv_weight * dbcv_for_score
     + ari_weight * mean_ari
-    + valid_run_ratio_weight * valid_run_ratio.
-    A parita' vengono usati mean_dbcv, mean_ari e valid_run_ratio come
-    tie-breaker decrescenti.
+    + valid_run_ratio_weight * valid_run_ratio
+    + noise_weight * (1 - mean_noise_ratio).
+
+    dbcv_for_score coincide con mean_dbcv quando e' finito; per soluzioni
+    valide a un solo cluster usa 0.0, valore neutro nella scala DBCV [-1, 1].
+    Non viene aggiunto nessun premio o vincolo sul numero assoluto di cluster.
 
     Returns
     -------
     output : dict
         Dizionario con:
         - best_n_components
+        - best_n_neighbors
+        - best_min_dist
+        - best_min_cluster_size
+        - best_min_samples
+        - best_n_clusters
         - best_combined_score
         - best_mean_dbcv
         - best_mean_ari
@@ -248,11 +256,22 @@ def optimize_umap_hdbscan_n_components(
     embeddings = np.asarray(embeddings, dtype=np.float64)
     embeddings = np.ascontiguousarray(embeddings)
 
+    if embeddings.ndim != 2:
+        raise ValueError("embeddings deve essere una matrice 2D.")
+
     n_samples = embeddings.shape[0]
     n_features = embeddings.shape[1]
-    n_components_values = _validate_n_components_values(
-        n_components_values=n_components_values,
+
+    if n_samples < 3:
+        raise ValueError("Servono almeno 3 glomeruli per UMAP + HDBSCAN.")
+
+    if n_features < 1:
+        raise ValueError("Ogni embedding deve avere almeno una feature.")
+
+    param_grid = make_auto_param_grid(
+        n_samples=n_samples,
         n_features=n_features,
+        max_param_combinations=max_auto_param_combinations,
     )
 
     n_runs = int(n_runs)
@@ -261,7 +280,7 @@ def optimize_umap_hdbscan_n_components(
         raise ValueError("n_runs deve essere >= 2 per calcolare l'ARI.")
 
     min_clusters = int(min_clusters)
-    max_clusters = int(max_clusters)
+    max_clusters = None if max_clusters is None else int(max_clusters)
     max_noise = float(max_noise)
     min_valid_run_ratio = float(min_valid_run_ratio)
     min_mean_ari = float(min_mean_ari)
@@ -271,11 +290,12 @@ def optimize_umap_hdbscan_n_components(
         "valid_run_ratio_weight",
         valid_run_ratio_weight,
     )
+    noise_weight = _validate_metric_weight("noise_weight", noise_weight)
 
     if min_clusters < 1:
         raise ValueError("min_clusters deve essere >= 1.")
 
-    if max_clusters < min_clusters:
+    if max_clusters is not None and max_clusters < min_clusters:
         raise ValueError("max_clusters deve essere >= min_clusters.")
 
     if max_noise < 0.0 or max_noise > 1.0:
@@ -293,38 +313,23 @@ def optimize_umap_hdbscan_n_components(
         dbcv_weight == 0.0
         and ari_weight == 0.0
         and valid_run_ratio_weight == 0.0
+        and noise_weight == 0.0
     ):
         raise ValueError(
             "Almeno un peso della metrica combinata deve essere > 0.0."
         )
 
-    n_neighbors = int(
-        np.clip(
-            round(1.0 * np.sqrt(n_samples)),
-            10,
-            min(80, n_samples - 1),
-        )
-    )
-
-    if n_neighbors >= n_samples:
-        raise ValueError(
-            "n_neighbors calcolato con la formula richiesta e' maggiore o "
-            "uguale al numero di glomeruli."
-        )
-
-    min_cluster_size = int(max(10, round(0.02 * n_samples)))
-    min_samples = int(np.clip(round(0.35 * min_cluster_size), 5, 20))
-
-    if min_cluster_size > n_samples:
-        raise ValueError(
-            "min_cluster_size calcolato con la formula richiesta e' maggiore "
-            "del numero di glomeruli."
-        )
-
     results = []
     run_details = []
 
-    for n_components in n_components_values:
+    for param_index, params in enumerate(param_grid):
+        n_components = int(params["n_components"])
+        n_neighbors = int(params["n_neighbors"])
+        min_dist = float(params["min_dist"])
+        min_cluster_size = int(params["min_cluster_size"])
+        min_samples = params["min_samples"]
+        min_samples_for_fit = None if min_samples is None else int(min_samples)
+
         labels_by_run = []
         valid_labels_by_run = []
         dbcv_values = []
@@ -338,11 +343,13 @@ def optimize_umap_hdbscan_n_components(
 
         for run_index in range(n_runs):
             run_row = {
+                "param_index": int(param_index),
                 "n_components": int(n_components),
                 "run_index": int(run_index),
                 "n_neighbors": int(n_neighbors),
+                "min_dist": float(min_dist),
                 "min_cluster_size": int(min_cluster_size),
-                "min_samples": int(min_samples),
+                "min_samples": min_samples_for_fit,
                 "dbcv": np.nan,
                 "n_clusters": np.nan,
                 "noise_ratio": np.nan,
@@ -357,8 +364,9 @@ def optimize_umap_hdbscan_n_components(
                     embeddings=embeddings,
                     n_components=n_components,
                     n_neighbors=n_neighbors,
+                    min_dist=min_dist,
                     min_cluster_size=min_cluster_size,
-                    min_samples=min_samples,
+                    min_samples=min_samples_for_fit,
                 )
 
                 labels = fit_result["labels"]
@@ -420,49 +428,78 @@ def optimize_umap_hdbscan_n_components(
         std_dbcv = _safe_std(valid_dbcv_values)
         std_ari = _safe_std(ari_values)
         mean_n_clusters = _safe_mean(valid_n_cluster_values)
+        mode_n_clusters = _safe_mode_int(valid_n_cluster_values)
+        std_n_clusters = _safe_std(valid_n_cluster_values)
         mean_noise_ratio = _safe_mean(valid_noise_ratio_values)
         mean_dbcv_all = _safe_mean(dbcv_values)
         std_dbcv_all = _safe_std(dbcv_values)
         std_ari_all = _safe_std(ari_values_all)
         mean_n_clusters_all = _safe_mean(n_cluster_values)
+        mode_n_clusters_all = _safe_mode_int(n_cluster_values)
+        std_n_clusters_all = _safe_std(n_cluster_values)
         mean_noise_ratio_all = _safe_mean(noise_ratio_values)
+        dbcv_for_score = mean_dbcv
+
+        if (
+            not np.isfinite(dbcv_for_score)
+            and np.isfinite(mean_n_clusters)
+            and mean_n_clusters < 2.0
+        ):
+            dbcv_for_score = 0.0
+
+        noise_score = (
+            1.0 - mean_noise_ratio
+            if np.isfinite(mean_noise_ratio)
+            else np.nan
+        )
         combined_score = _weighted_metric_sum(
             [
-                (dbcv_weight, mean_dbcv),
+                (dbcv_weight, dbcv_for_score),
                 (ari_weight, mean_ari),
                 (valid_run_ratio_weight, valid_run_ratio),
+                (noise_weight, noise_score),
             ]
         )
 
         results.append({
+            "param_index": int(param_index),
+            "grid_source": "auto",
             "n_components": int(n_components),
             "n_runs": int(n_runs),
             "successful_runs": int(successful_runs),
             "valid_runs": int(valid_runs),
             "valid_run_ratio": valid_run_ratio,
             "n_neighbors": int(n_neighbors),
+            "min_dist": float(min_dist),
             "min_cluster_size": int(min_cluster_size),
-            "min_samples": int(min_samples),
+            "min_samples": min_samples_for_fit,
             "min_clusters": int(min_clusters),
-            "max_clusters": int(max_clusters),
+            "max_clusters": max_clusters,
             "max_noise": float(max_noise),
             "min_valid_run_ratio": float(min_valid_run_ratio),
             "min_mean_ari": float(min_mean_ari),
             "dbcv_weight": float(dbcv_weight),
             "ari_weight": float(ari_weight),
             "valid_run_ratio_weight": float(valid_run_ratio_weight),
+            "noise_weight": float(noise_weight),
             "mean_dbcv": mean_dbcv,
+            "dbcv_for_score": dbcv_for_score,
             "std_dbcv": std_dbcv,
             "mean_ari": mean_ari,
             "std_ari": std_ari,
             "mean_n_clusters": mean_n_clusters,
+            "mode_n_clusters": mode_n_clusters,
+            "std_n_clusters": std_n_clusters,
             "mean_noise_ratio": mean_noise_ratio,
+            "noise_score": noise_score,
             "combined_score": combined_score,
             "mean_dbcv_all": mean_dbcv_all,
             "std_dbcv_all": std_dbcv_all,
             "mean_ari_all": mean_ari_all,
             "std_ari_all": std_ari_all,
             "mean_n_clusters_all": mean_n_clusters_all,
+            "mode_n_clusters_all": mode_n_clusters_all,
+            "std_n_clusters_all": std_n_clusters_all,
             "mean_noise_ratio_all": mean_noise_ratio_all,
         })
 
@@ -480,7 +517,7 @@ def optimize_umap_hdbscan_n_components(
             results_df["valid_run_ratio"].to_numpy(dtype=float)
             >= min_valid_run_ratio
         )
-        & (results_df["mean_ari"].to_numpy(dtype=float) > min_mean_ari)
+        & (results_df["mean_ari"].to_numpy(dtype=float) >= min_mean_ari)
     )
 
     selectable_results = results_df.loc[
@@ -490,24 +527,31 @@ def optimize_umap_hdbscan_n_components(
     if selectable_results.empty:
         return {
             "best_n_components": None,
+            "best_n_neighbors": None,
+            "best_min_dist": None,
+            "best_min_cluster_size": None,
+            "best_min_samples": None,
+            "best_n_clusters": None,
             "best_combined_score": np.nan,
             "best_mean_dbcv": np.nan,
             "best_mean_ari": np.nan,
+            "used_auto_param_grid": True,
+            "n_param_combinations": int(len(param_grid)),
             "best_params": {
                 "umap": {
-                    "n_neighbors": int(n_neighbors),
-                    "min_dist": 0.0,
+                    "n_neighbors": None,
+                    "min_dist": None,
                     "metric": "cosine",
                     "n_components": None,
                 },
                 "hdbscan": {
                     "metric": "euclidean",
-                    "min_cluster_size": int(min_cluster_size),
-                    "min_samples": int(min_samples),
+                    "min_cluster_size": None,
+                    "min_samples": None,
                 },
                 "constraints": {
                     "min_clusters": int(min_clusters),
-                    "max_clusters": int(max_clusters),
+                    "max_clusters": max_clusters,
                     "max_noise": float(max_noise),
                     "min_valid_run_ratio": float(min_valid_run_ratio),
                     "min_mean_ari": float(min_mean_ari),
@@ -517,6 +561,8 @@ def optimize_umap_hdbscan_n_components(
                     "dbcv_weight": float(dbcv_weight),
                     "ari_weight": float(ari_weight),
                     "valid_run_ratio_weight": float(valid_run_ratio_weight),
+                    "noise_weight": float(noise_weight),
+                    "single_cluster_dbcv_for_score": 0.0,
                 },
             },
             "results": results_df,
@@ -524,28 +570,51 @@ def optimize_umap_hdbscan_n_components(
         }
 
     selectable_results = selectable_results.sort_values(
-        by=["combined_score", "mean_dbcv", "mean_ari", "valid_run_ratio"],
-        ascending=[False, False, False, False],
+        by=[
+            "combined_score",
+            "mean_ari",
+            "dbcv_for_score",
+            "valid_run_ratio",
+            "noise_score",
+            "std_n_clusters",
+        ],
+        ascending=[False, False, False, False, False, True],
+        na_position="last",
     )
 
     best_row = selectable_results.iloc[0]
     best_n_components = int(best_row["n_components"])
+    best_n_neighbors = int(best_row["n_neighbors"])
+    best_min_dist = float(best_row["min_dist"])
+    best_min_cluster_size = int(best_row["min_cluster_size"])
+    best_min_samples = best_row["min_samples"]
+    best_min_samples = (
+        None
+        if pd.isna(best_min_samples)
+        else int(best_min_samples)
+    )
+    best_n_clusters = best_row["mode_n_clusters"]
+    best_n_clusters = (
+        None
+        if pd.isna(best_n_clusters)
+        else int(best_n_clusters)
+    )
 
     best_params = {
         "umap": {
-            "n_neighbors": int(n_neighbors),
-            "min_dist": 0.0,
+            "n_neighbors": best_n_neighbors,
+            "min_dist": best_min_dist,
             "metric": "cosine",
             "n_components": best_n_components,
         },
         "hdbscan": {
             "metric": "euclidean",
-            "min_cluster_size": int(min_cluster_size),
-            "min_samples": int(min_samples),
+            "min_cluster_size": best_min_cluster_size,
+            "min_samples": best_min_samples,
         },
         "constraints": {
             "min_clusters": int(min_clusters),
-            "max_clusters": int(max_clusters),
+            "max_clusters": max_clusters,
             "max_noise": float(max_noise),
             "min_valid_run_ratio": float(min_valid_run_ratio),
             "min_mean_ari": float(min_mean_ari),
@@ -555,33 +624,47 @@ def optimize_umap_hdbscan_n_components(
             "dbcv_weight": float(dbcv_weight),
             "ari_weight": float(ari_weight),
             "valid_run_ratio_weight": float(valid_run_ratio_weight),
+            "noise_weight": float(noise_weight),
+            "single_cluster_dbcv_for_score": 0.0,
         },
     }
 
     return {
         "best_n_components": best_n_components,
+        "best_n_neighbors": best_n_neighbors,
+        "best_min_dist": best_min_dist,
+        "best_min_cluster_size": best_min_cluster_size,
+        "best_min_samples": best_min_samples,
+        "best_n_clusters": best_n_clusters,
         "best_combined_score": float(best_row["combined_score"]),
         "best_mean_dbcv": float(best_row["mean_dbcv"]),
         "best_mean_ari": float(best_row["mean_ari"]),
+        "used_auto_param_grid": True,
+        "n_param_combinations": int(len(param_grid)),
         "best_params": best_params,
         "results": results_df.sort_values(
             by=[
                 "valid_for_selection",
                 "combined_score",
-                "mean_dbcv",
                 "mean_ari",
+                "dbcv_for_score",
                 "valid_run_ratio",
+                "noise_score",
+                "std_n_clusters",
             ],
-            ascending=[False, False, False, False, False],
+            ascending=[False, False, False, False, False, False, True],
+            na_position="last",
         ).reset_index(drop=True),
         "run_details": run_details_df,
     }
 
 
-optimize_hdbscan_umap_n_components = optimize_umap_hdbscan_n_components
+optimize_umap_hdbscan_n_components = optimize_umap_hdbscan_auto
+optimize_hdbscan_umap_n_components = optimize_umap_hdbscan_auto
 
 
 __all__ = [
+    "optimize_umap_hdbscan_auto",
     "optimize_umap_hdbscan_n_components",
     "optimize_hdbscan_umap_n_components",
 ]
