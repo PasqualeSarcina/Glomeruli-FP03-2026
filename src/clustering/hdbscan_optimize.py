@@ -150,6 +150,7 @@ def _fit_umap_hdbscan(
     min_dist,
     min_cluster_size,
     min_samples,
+    cluster_selection_method
 ):
     reducer = umap.UMAP(
         n_neighbors=int(n_neighbors),
@@ -166,7 +167,7 @@ def _fit_umap_hdbscan(
         metric="euclidean",
         min_cluster_size=int(min_cluster_size),
         min_samples=None if min_samples is None else int(min_samples),
-        cluster_selection_method = "leaf"
+        cluster_selection_method = cluster_selection_method
     )
 
     labels = clusterer.fit_predict(X_umap)
@@ -187,10 +188,12 @@ def optimize_umap_hdbscan_auto(
     max_noise=0.50,
     min_valid_run_ratio=0.60,
     min_mean_ari=0.50,
+    min_mean_dbcv=None,
     dbcv_weight=0.35,
     ari_weight=0.45,
     valid_run_ratio_weight=0.15,
     noise_weight=0.05,
+    cluster_selection_method="eom",
     max_auto_param_combinations=240,
 ):
     """
@@ -224,6 +227,8 @@ def optimize_umap_hdbscan_auto(
     Una combinazione entra nella selezione finale solo se:
     - valid_run_ratio >= min_valid_run_ratio
     - mean_ari >= min_mean_ari
+    - mean_dbcv >= min_mean_dbcv, se min_mean_dbcv non e' None e la
+      soluzione ha almeno 2 cluster
 
     La selezione finale ordina per combined_score decrescente, calcolato come:
     dbcv_weight * dbcv_for_score
@@ -284,6 +289,11 @@ def optimize_umap_hdbscan_auto(
     max_noise = float(max_noise)
     min_valid_run_ratio = float(min_valid_run_ratio)
     min_mean_ari = float(min_mean_ari)
+    min_mean_dbcv = (
+        None
+        if min_mean_dbcv is None
+        else float(min_mean_dbcv)
+    )
     dbcv_weight = _validate_metric_weight("dbcv_weight", dbcv_weight)
     ari_weight = _validate_metric_weight("ari_weight", ari_weight)
     valid_run_ratio_weight = _validate_metric_weight(
@@ -308,6 +318,15 @@ def optimize_umap_hdbscan_auto(
 
     if min_mean_ari < -1.0 or min_mean_ari > 1.0:
         raise ValueError("min_mean_ari deve essere compreso tra -1.0 e 1.0.")
+
+    if min_mean_dbcv is not None and (
+        not np.isfinite(min_mean_dbcv)
+        or min_mean_dbcv < -1.0
+        or min_mean_dbcv > 1.0
+    ):
+        raise ValueError(
+            "min_mean_dbcv deve essere None oppure compreso tra -1.0 e 1.0."
+        )
 
     if (
         dbcv_weight == 0.0
@@ -367,6 +386,7 @@ def optimize_umap_hdbscan_auto(
                     min_dist=min_dist,
                     min_cluster_size=min_cluster_size,
                     min_samples=min_samples_for_fit,
+                    cluster_selection_method=cluster_selection_method,
                 )
 
                 labels = fit_result["labels"]
@@ -478,6 +498,7 @@ def optimize_umap_hdbscan_auto(
             "max_noise": float(max_noise),
             "min_valid_run_ratio": float(min_valid_run_ratio),
             "min_mean_ari": float(min_mean_ari),
+            "min_mean_dbcv": min_mean_dbcv,
             "dbcv_weight": float(dbcv_weight),
             "ari_weight": float(ari_weight),
             "valid_run_ratio_weight": float(valid_run_ratio_weight),
@@ -510,9 +531,28 @@ def optimize_umap_hdbscan_auto(
         np.isfinite(results_df["mean_ari"].to_numpy(dtype=float))
         & np.isfinite(results_df["combined_score"].to_numpy(dtype=float))
     )
+    single_cluster_selection_mask = (
+        np.isfinite(results_df["mean_n_clusters"].to_numpy(dtype=float))
+        & (results_df["mean_n_clusters"].to_numpy(dtype=float) < 2.0)
+    )
+    dbcv_selection_mask = (
+        True
+        if min_mean_dbcv is None
+        else (
+            single_cluster_selection_mask
+            | (
+                np.isfinite(results_df["mean_dbcv"].to_numpy(dtype=float))
+                & (
+                    results_df["mean_dbcv"].to_numpy(dtype=float)
+                    >= min_mean_dbcv
+                )
+            )
+        )
+    )
 
     results_df["valid_for_selection"] = (
         finite_selection_mask
+        & dbcv_selection_mask
         & (
             results_df["valid_run_ratio"].to_numpy(dtype=float)
             >= min_valid_run_ratio
@@ -548,6 +588,7 @@ def optimize_umap_hdbscan_auto(
                     "metric": "euclidean",
                     "min_cluster_size": None,
                     "min_samples": None,
+                    "cluster_selection_method":None
                 },
                 "constraints": {
                     "min_clusters": int(min_clusters),
@@ -555,6 +596,7 @@ def optimize_umap_hdbscan_auto(
                     "max_noise": float(max_noise),
                     "min_valid_run_ratio": float(min_valid_run_ratio),
                     "min_mean_ari": float(min_mean_ari),
+                    "min_mean_dbcv": min_mean_dbcv,
                 },
                 "selection": {
                     "metric": "combined_score",
@@ -611,6 +653,7 @@ def optimize_umap_hdbscan_auto(
             "metric": "euclidean",
             "min_cluster_size": best_min_cluster_size,
             "min_samples": best_min_samples,
+            "cluster_selection_method": cluster_selection_method
         },
         "constraints": {
             "min_clusters": int(min_clusters),
@@ -618,6 +661,7 @@ def optimize_umap_hdbscan_auto(
             "max_noise": float(max_noise),
             "min_valid_run_ratio": float(min_valid_run_ratio),
             "min_mean_ari": float(min_mean_ari),
+            "min_mean_dbcv": min_mean_dbcv,
         },
         "selection": {
             "metric": "combined_score",
