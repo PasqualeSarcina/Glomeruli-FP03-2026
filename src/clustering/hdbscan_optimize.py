@@ -183,6 +183,7 @@ def _fit_umap_hdbscan(
 def optimize_umap_hdbscan_auto(
     embeddings,
     n_runs=10,
+    min_dist=0.1,
     min_clusters=1,
     max_clusters=None,
     max_noise=0.50,
@@ -190,7 +191,6 @@ def optimize_umap_hdbscan_auto(
     min_mean_ari=0.50,
     min_mean_dbcv=None,
     dbcv_weight=0.35,
-    ari_weight=0.45,
     valid_run_ratio_weight=0.15,
     noise_weight=0.05,
     cluster_selection_method="eom",
@@ -295,7 +295,6 @@ def optimize_umap_hdbscan_auto(
         else float(min_mean_dbcv)
     )
     dbcv_weight = _validate_metric_weight("dbcv_weight", dbcv_weight)
-    ari_weight = _validate_metric_weight("ari_weight", ari_weight)
     valid_run_ratio_weight = _validate_metric_weight(
         "valid_run_ratio_weight",
         valid_run_ratio_weight,
@@ -330,7 +329,6 @@ def optimize_umap_hdbscan_auto(
 
     if (
         dbcv_weight == 0.0
-        and ari_weight == 0.0
         and valid_run_ratio_weight == 0.0
         and noise_weight == 0.0
     ):
@@ -344,7 +342,6 @@ def optimize_umap_hdbscan_auto(
     for param_index, params in enumerate(param_grid):
         n_components = int(params["n_components"])
         n_neighbors = int(params["n_neighbors"])
-        min_dist = float(params["min_dist"])
         min_cluster_size = int(params["min_cluster_size"])
         min_samples = params["min_samples"]
         min_samples_for_fit = None if min_samples is None else int(min_samples)
@@ -475,7 +472,6 @@ def optimize_umap_hdbscan_auto(
         combined_score = _weighted_metric_sum(
             [
                 (dbcv_weight, dbcv_for_score),
-                (ari_weight, mean_ari),
                 (valid_run_ratio_weight, valid_run_ratio),
                 (noise_weight, noise_score),
             ]
@@ -500,7 +496,6 @@ def optimize_umap_hdbscan_auto(
             "min_mean_ari": float(min_mean_ari),
             "min_mean_dbcv": min_mean_dbcv,
             "dbcv_weight": float(dbcv_weight),
-            "ari_weight": float(ari_weight),
             "valid_run_ratio_weight": float(valid_run_ratio_weight),
             "noise_weight": float(noise_weight),
             "mean_dbcv": mean_dbcv,
@@ -601,7 +596,6 @@ def optimize_umap_hdbscan_auto(
                 "selection": {
                     "metric": "combined_score",
                     "dbcv_weight": float(dbcv_weight),
-                    "ari_weight": float(ari_weight),
                     "valid_run_ratio_weight": float(valid_run_ratio_weight),
                     "noise_weight": float(noise_weight),
                     "single_cluster_dbcv_for_score": 0.0,
@@ -666,7 +660,6 @@ def optimize_umap_hdbscan_auto(
         "selection": {
             "metric": "combined_score",
             "dbcv_weight": float(dbcv_weight),
-            "ari_weight": float(ari_weight),
             "valid_run_ratio_weight": float(valid_run_ratio_weight),
             "noise_weight": float(noise_weight),
             "single_cluster_dbcv_for_score": 0.0,

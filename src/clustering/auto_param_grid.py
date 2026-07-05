@@ -98,8 +98,6 @@ def make_auto_param_grid(
         max_value=min(n_samples - 1, round(0.20 * n_samples), 200),
     )
 
-    min_dist_values = [0.05]
-
     min_cluster_size_values = _make_set(
         [
             round(0.02 * n_samples),
@@ -114,10 +112,9 @@ def make_auto_param_grid(
 
     param_grid = []
 
-    for n_components, n_neighbors, min_dist, min_cluster_size in product(
+    for n_components, n_neighbors, min_cluster_size in product(
         n_components_values,
         n_neighbors_values,
-        min_dist_values,
         min_cluster_size_values,
     ):
         min_samples_values = _make_set(
@@ -135,7 +132,6 @@ def make_auto_param_grid(
             param_grid.append({
                 "n_components": int(n_components),
                 "n_neighbors": int(n_neighbors),
-                "min_dist": float(min_dist),
                 "min_cluster_size": int(min_cluster_size),
                 "min_samples": int(min_samples),
             })
