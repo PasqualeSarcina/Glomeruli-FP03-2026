@@ -217,8 +217,9 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 
-# Project local data
-./data/
+# Project local data and generated results
+/data/
+/results/
 *.tar.gz
 
 # Claude

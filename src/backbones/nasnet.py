@@ -36,6 +36,7 @@ class NASNet:
     def __call__(
         self,
         image: Image.Image,
+        mask: Image.Image | None = None,
     ) -> np.ndarray:
         x = self._preprocess_image(image)
         embedding = self.backbone(x, training=False).numpy()
