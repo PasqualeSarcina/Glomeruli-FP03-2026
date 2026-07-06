@@ -83,9 +83,52 @@ def dbcv_per_cluster_consensus(
     valid_clusters = sorted(set(labels) - {-1})
     n_clusters = len(valid_clusters)
     noise_size = int(np.sum(labels == -1))
+    cluster_sizes = {
+        relabelled_cluster: int(np.sum(labels == relabelled_cluster))
+        for relabelled_cluster in valid_clusters
+    }
+    evaluable_clusters = [
+        relabelled_cluster
+        for relabelled_cluster in valid_clusters
+        if cluster_sizes[relabelled_cluster] >= 2
+    ]
 
     if n_clusters < 2:
-        raise ValueError("DBCV richiede almeno 2 cluster non-noise.")
+        rows = []
+
+        # eventuale riga rumore
+        if noise_size > 0:
+            rows.append({
+                "cluster": -1,
+                "size": noise_size,
+                "dbcv_mean": np.nan,
+                "dbcv_std": np.nan,
+                "dbcv_min": np.nan,
+                "dbcv_max": np.nan,
+                "dbcv_median": np.nan,
+                "n_runs_valid": 0,
+                "global_dbcv_mean": np.nan,
+                "global_dbcv_std": np.nan,
+            })
+
+        # eventuale unico cluster non-noise
+        for relabelled_cluster in valid_clusters:
+            original_cluster = new_to_old[relabelled_cluster]
+
+            rows.append({
+                "cluster": original_cluster,
+                "size": int(np.sum(labels == relabelled_cluster)),
+                "dbcv_mean": np.nan,
+                "dbcv_std": np.nan,
+                "dbcv_min": np.nan,
+                "dbcv_max": np.nan,
+                "dbcv_median": np.nan,
+                "n_runs_valid": 0,
+                "global_dbcv_mean": np.nan,
+                "global_dbcv_std": np.nan,
+            })
+
+        return pd.DataFrame(rows).sort_values("cluster").reset_index(drop=True)
 
     rows = []
 
@@ -98,33 +141,57 @@ def dbcv_per_cluster_consensus(
                 f"ma labels con {labels.shape[0]} campioni."
             )
 
-        if remove_noise:
-            mask = labels != -1
+        # hdbscan.validity_index fails on singleton clusters because their
+        # internal MST is empty. Keep them in the output with NaN DBCV.
+        if len(evaluable_clusters) >= 2:
+            score_index_by_cluster = {
+                relabelled_cluster: score_index
+                for score_index, relabelled_cluster in enumerate(evaluable_clusters)
+            }
+
+            if remove_noise:
+                mask = np.isin(labels, evaluable_clusters)
+            else:
+                mask = np.ones(labels.shape, dtype=bool)
+
             X_eval = X[mask]
-            labels_eval = np.ascontiguousarray(labels[mask], dtype=np.int64)
+            labels_eval_source = labels[mask]
+            labels_eval = np.full(labels_eval_source.shape, -1, dtype=np.int64)
+
+            for relabelled_cluster, score_index in score_index_by_cluster.items():
+                labels_eval[labels_eval_source == relabelled_cluster] = score_index
+
+            labels_eval = np.ascontiguousarray(labels_eval, dtype=np.int64)
+
+            global_dbcv, cluster_scores = validity_index(
+                X_eval,
+                labels_eval,
+                metric=metric,
+                per_cluster_scores=True
+            )
+
+            cluster_scores = np.asarray(cluster_scores, dtype=np.float64)
         else:
-            X_eval = X
-            labels_eval = np.ascontiguousarray(labels, dtype=np.int64)
-
-        global_dbcv, cluster_scores = validity_index(
-            X_eval,
-            labels_eval,
-            metric=metric,
-            per_cluster_scores=True
-        )
-
-        cluster_scores = np.asarray(cluster_scores)
+            score_index_by_cluster = {}
+            global_dbcv = np.nan
+            cluster_scores = np.array([], dtype=np.float64)
 
         for relabelled_cluster in valid_clusters:
             original_cluster = new_to_old[relabelled_cluster]
+            score_index = score_index_by_cluster.get(relabelled_cluster)
+            dbcv = (
+                float(cluster_scores[score_index])
+                if score_index is not None and score_index < len(cluster_scores)
+                else np.nan
+            )
 
             rows.append({
                 "run": run_idx,
                 "cluster": original_cluster,
                 "cluster_relabelled": relabelled_cluster,
-                "size": int(np.sum(labels == relabelled_cluster)),
+                "size": cluster_sizes[relabelled_cluster],
                 "global_dbcv": float(global_dbcv),
-                "dbcv": float(cluster_scores[relabelled_cluster]),
+                "dbcv": dbcv,
             })
 
     df_detail = pd.DataFrame(rows)
@@ -146,19 +213,20 @@ def dbcv_per_cluster_consensus(
         .reset_index(drop=True)
     )
 
-    noise_row = pd.DataFrame([{
-        "cluster": -1,
-        "size": noise_size,
-        "dbcv_mean": np.nan,
-        "dbcv_std": np.nan,
-        "dbcv_min": np.nan,
-        "dbcv_max": np.nan,
-        "dbcv_median": np.nan,
-        "n_runs_valid": 0,
-        "global_dbcv_mean": np.nan,
-        "global_dbcv_std": np.nan,
-    }])
+    if noise_size > 0:
+        noise_row = pd.DataFrame([{
+            "cluster": -1,
+            "size": noise_size,
+            "dbcv_mean": np.nan,
+            "dbcv_std": np.nan,
+            "dbcv_min": np.nan,
+            "dbcv_max": np.nan,
+            "dbcv_median": np.nan,
+            "n_runs_valid": 0,
+            "global_dbcv_mean": np.nan,
+            "global_dbcv_std": np.nan,
+        }])
 
-    df_summary = pd.concat([noise_row, df_summary], ignore_index=True)
+        df_summary = pd.concat([noise_row, df_summary], ignore_index=True)
 
     return df_summary
