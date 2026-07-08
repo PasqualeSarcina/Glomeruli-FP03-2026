@@ -4,8 +4,7 @@ import numpy as np
 def consensus_param_score(
     dbcv_df,
     consensus_labels,
-    max_noise=0.35,
-    penalty_noise=1.5,
+    max_noise,
     penalty_std=0.25,
     penalty_bad_cluster=0.50,
 ):
@@ -15,6 +14,10 @@ def consensus_param_score(
     noise_ratio = np.mean(labels == -1)
 
     if n_clusters < 2:
+        return -np.inf
+
+    # vincolo duro sul rumore
+    if noise_ratio > max_noise:
         return -np.inf
 
     non_noise_df = dbcv_df[dbcv_df["cluster"] != -1]
@@ -32,12 +35,10 @@ def consensus_param_score(
     if not np.isfinite(global_dbcv_std):
         global_dbcv_std = 0.0
 
-    noise_excess = max(0.0, noise_ratio - max_noise)
     bad_cluster_penalty = max(0.0, -min_cluster_dbcv_median)
 
     score = (
         global_dbcv_mean
-        - penalty_noise * noise_excess
         - penalty_std * global_dbcv_std
         - penalty_bad_cluster * bad_cluster_penalty
     )
