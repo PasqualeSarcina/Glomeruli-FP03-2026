@@ -7,16 +7,18 @@ import tensorflow as tf
 from src.backbones.backbone import Backbone
 
 
-class DenseNet169(Backbone):
+class DenseNet201(Backbone):
     def __init__(
             self,
             input_size
     ):
         assert input_size > 32, "Input size should be greater than 32"
-        backbone = keras.applications.DenseNet169(
+        backbone = keras.applications.DenseNet201(
             include_top=False,
             input_shape=(input_size, input_size, 3),
-            pooling=None
+            weights="imagenet",
+            pooling=None,
+            name="densenet201",
         )
         backbone.trainable = False
 
@@ -31,7 +33,6 @@ class DenseNet169(Backbone):
 
         image_array = np.asarray(image, dtype=np.float32)
         image_array = np.expand_dims(image_array, axis=0)
-
         image_array = preprocess_input(image_array, data_format=None)
 
         return image_array
@@ -50,33 +51,18 @@ class DenseNet169(Backbone):
         _, feature_h, feature_w, _ = feature_map.shape
 
         mask = mask.convert("L")
-
         mask = mask.resize(
             (feature_w, feature_h),
             Image.Resampling.BILINEAR,
         )
 
-        weights = np.asarray(mask, dtype=np.float32)
-
-        weights = weights / 255.0
-
+        weights = np.asarray(mask, dtype=np.float32) / 255.0
         weights = tf.convert_to_tensor(weights, dtype=tf.float32)
-
         weights = tf.reshape(weights, shape=(1, feature_h, feature_w, 1))
 
-        weighted_feature_map = feature_map * weights
-
-        numerator = tf.reduce_sum(
-            weighted_feature_map,
-            axis=(1, 2),
-        )
-
-        denominator = tf.reduce_sum(
-            weights,
-            axis=(1, 2),
-        )
+        numerator = tf.reduce_sum(feature_map * weights, axis=(1, 2))
+        denominator = tf.reduce_sum(weights, axis=(1, 2))
 
         embedding = numerator / (denominator + 1e-8)
 
         return embedding.numpy().astype("float32")
-

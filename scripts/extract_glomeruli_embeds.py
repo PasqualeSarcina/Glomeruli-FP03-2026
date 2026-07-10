@@ -19,6 +19,9 @@ from src.backbones.nasnet import NASNet
 from src.backbones.dinov2 import DinoV2ModelName, DinoV2
 from src.backbones.dinov3 import DinoV3ModelName, DinoV3
 from src.backbones.densenet169 import DenseNet169
+from src.backbones.mobilenet import MobileNet  
+from src.backbones.densenet201 import DenseNet201
+from src.backbones.xception import Xception
 
 
 def parse_args():
@@ -74,6 +77,21 @@ def parse_args():
     densenet_parser = subparsers.add_parser(
         "densenet",
         description="Extract glomeruli embeds using DenseNet169"
+    )
+
+    mobilenet_parser = subparsers.add_parser(
+        "mobilenet",
+        description="Extract glomeruli embeds using MobileNet."
+    )
+
+    densenet201_parser = subparsers.add_parser(
+        "densenet201",
+        description="Extract glomeruli embeds using DenseNet201."
+    )
+
+    xception_parser = subparsers.add_parser(
+        "xception",
+        description="Extract glomeruli embeds using Xception."
     )
 
     parser.add_argument(
@@ -137,6 +155,20 @@ def main():
         case "densenet":
             model = DenseNet169(
                 args.input_size or 224
+            )
+        
+        case "mobilenet":
+            model = MobileNet(
+                args.input_size or 224
+            )
+        case "densenet201":
+            model = DenseNet201(
+                args.input_size or 224
+            )
+
+        case "xception":
+            model = Xception(
+                args.input_size or 299
             )
 
         case _:
