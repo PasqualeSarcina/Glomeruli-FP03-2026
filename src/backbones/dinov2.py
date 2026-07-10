@@ -1,8 +1,6 @@
-from os import PathLike
 from typing import Literal
+
 import tensorflow as tf
-import PIL
-import keras
 import keras_hub
 import numpy as np
 from PIL import Image
@@ -20,9 +18,11 @@ class DinoV2(Backbone):
     def __init__(
             self,
             model_name: DinoV2ModelName,
-            input_size,
+            input_size: int | None,
             mode: Literal["cls", "patch", "both"]
     ):
+        input_size = input_size or 224
+
         backbone = keras_hub.models.DINOV2Backbone.from_preset(
             "dinov2_" + model_name,
             image_shape=(input_size, input_size, 3),
@@ -44,7 +44,10 @@ class DinoV2(Backbone):
             image: Image.Image
     ):
         image = image.convert("RGB")
-        image_converter = keras_hub.layers.DINOV2ImageConverter.from_preset("dinov2_" + self.model_name)
+        image_converter = keras_hub.layers.DINOV2ImageConverter.from_preset(
+            "dinov2_" + self.model_name,
+            image_size=(self.input_size, self.input_size),
+        )
         array = np.asarray(image, dtype=np.float32)
         array = np.expand_dims(array, axis=0)
         processed = image_converter(array)

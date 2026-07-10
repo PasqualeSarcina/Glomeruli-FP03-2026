@@ -79,3 +79,4 @@ class DenseNet169(Backbone):
         embedding = numerator / (denominator + 1e-8)
 
         return embedding.numpy().astype("float32")
+

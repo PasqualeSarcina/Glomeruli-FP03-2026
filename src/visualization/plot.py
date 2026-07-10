@@ -20,9 +20,8 @@ def plot_clustering_on_umap(
     mode: ProjectionMode = "2d",
     title: str = "Clustering su UMAP",
     n_neighbors: int = 15,
-    min_dist: float = 0.1,
+    min_dist: float = 0.05,
     metric: str = "cosine",
-    random_state: int = 42,
     save_path: str | Path | None = None,
     show: bool = True,
     point_size: float = 20.0,
@@ -56,7 +55,6 @@ def plot_clustering_on_umap(
         n_neighbors=n_neighbors,
         min_dist=min_dist,
         metric=metric,
-        random_state=random_state,
     )
 
     projections = [(0, 1)] if mode == "2d" else [(0, 1), (1, 2)]
@@ -127,14 +125,12 @@ def _fit_umap(
     n_neighbors: int,
     min_dist: float,
     metric: str,
-    random_state: int,
 ) -> np.ndarray:
     reducer = umap.UMAP(
         n_components=n_components,
         n_neighbors=n_neighbors,
         min_dist=min_dist,
         metric=metric,
-        random_state=random_state,
     )
     return reducer.fit_transform(embeddings)
 
