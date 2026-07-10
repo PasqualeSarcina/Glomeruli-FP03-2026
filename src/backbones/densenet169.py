@@ -39,17 +39,13 @@ class DenseNet169(Backbone):
     def _postprocess(
             self,
             embedding,
-            mask: Image.Image,
+            mask: Image.Image | None = None,
     ):
-        """
-        feature_map: tensore DenseNet con shape (1, H, W, C)
-        mask_image: maschera PIL del glomerulo
-
-        ritorna:
-            embedding con shape (1, C)
-        """
-
         feature_map = tf.convert_to_tensor(embedding, dtype=tf.float32)
+
+        if mask is None:
+            embedding = tf.reduce_mean(feature_map, axis=(1, 2))
+            return embedding.numpy().astype("float32")
 
         _, feature_h, feature_w, _ = feature_map.shape
 
