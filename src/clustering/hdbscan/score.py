@@ -71,3 +71,4 @@ def consensus_param_metrics(dbcv_df, consensus_labels):
         "min_cluster_dbcv_median": float(non_noise_df["dbcv_median"].min()),
         "mean_cluster_dbcv_median": float(non_noise_df["dbcv_median"].mean()),
     }
+

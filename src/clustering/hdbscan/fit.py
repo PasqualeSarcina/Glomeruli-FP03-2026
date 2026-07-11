@@ -3,13 +3,14 @@ import umap
 
 def fit_umap_hdbscan(
         X,
-        seed,
+
         n_components,
         n_neighbors,
         min_cluster_size,
         min_samples,
-        umap_metric = "euclidean",
-        min_dist = 0.05,
+        umap_metric,
+        min_dist,
+        seed=None,
         hdbscan_metric = "euclidean",
         cluster_selection_method = "eom"
 ):

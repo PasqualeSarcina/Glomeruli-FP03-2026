@@ -5,20 +5,14 @@ def _make_unique_int_values(values):
     return sorted(set(values))
 
 def make_umap_hdbscan_grid_params(
-        n_components_values: list[int],
         n_neighbors_values: list[int],
-        min_cluster_size_values: list[int],
         min_samples_values: list[int]
 ):
-    n_components_values = _make_unique_int_values(n_components_values)
     n_neighbors_values = _make_unique_int_values(n_neighbors_values)
-    min_cluster_size_values = _make_unique_int_values(min_cluster_size_values)
     min_samples_values = _make_unique_int_values(min_samples_values)
 
     param_grid = {
-        "n_components": n_components_values,
         "n_neighbors": n_neighbors_values,
-        "min_cluster_size": min_cluster_size_values,
         "min_samples": min_samples_values
     }
 
