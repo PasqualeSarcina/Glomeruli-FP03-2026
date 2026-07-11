@@ -1,23 +1,26 @@
+from pathlib import Path
+
 import keras
 from PIL import Image
 import numpy as np
-from keras.src.applications.densenet import preprocess_input
+from tensorflow.keras.applications.densenet import preprocess_input
 import tensorflow as tf
 
 from src.backbones.backbone import Backbone
 
 
-class DenseNet169(Backbone):
+class Kimianet(Backbone):
     def __init__(
             self,
-            input_size
+            input_size= 224
     ):
         assert input_size > 32, "Input size should be greater than 32"
-        backbone = keras.applications.DenseNet169(
+        backbone = tf.keras.applications.DenseNet121(
             include_top=False,
             input_shape=(input_size, input_size, 3),
             pooling=None
         )
+        backbone.load_weights(Path(__file__).parent.parent.parent / "data" / "checkpoints" / "KimiaNetKerasWeights.h5")
         backbone.trainable = False
 
         super().__init__(backbone, input_size, backbone.output_shape[-1])
@@ -35,4 +38,3 @@ class DenseNet169(Backbone):
         image_array = preprocess_input(image_array, data_format=None)
 
         return image_array
-

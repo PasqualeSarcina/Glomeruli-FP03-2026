@@ -22,7 +22,7 @@ from src.backbones.densenet169 import DenseNet169
 from src.backbones.mobilenet import MobileNet  
 from src.backbones.densenet201 import DenseNet201
 from src.backbones.xception import Xception
-
+from src.backbones.kimianet import Kimianet
 
 def parse_args():
     parser = argparse.ArgumentParser(
@@ -74,8 +74,8 @@ def parse_args():
         description="Extract glomeruli embeds using NASNet."
     )
 
-    densenet_parser = subparsers.add_parser(
-        "densenet",
+    densenet169_parser = subparsers.add_parser(
+        "densenet169",
         description="Extract glomeruli embeds using DenseNet169"
     )
 
@@ -92,6 +92,10 @@ def parse_args():
     xception_parser = subparsers.add_parser(
         "xception",
         description="Extract glomeruli embeds using Xception."
+    )
+
+    subparsers.add_parser(
+        "kimianet"
     )
 
     parser.add_argument(
@@ -152,7 +156,7 @@ def main():
             model = NASNet(
                 args.input_size or 331
             )
-        case "densenet":
+        case "densenet169":
             model = DenseNet169(
                 args.input_size or 224
             )
@@ -170,6 +174,8 @@ def main():
             model = Xception(
                 args.input_size or 299
             )
+        case "kimianet":
+            model = Kimianet()
 
         case _:
             raise ValueError(f"Invalid backbone: {model_name}")
