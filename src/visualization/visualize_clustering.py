@@ -13,7 +13,7 @@ import pandas as pd
 from matplotlib.axes import Axes
 from PIL import Image, UnidentifiedImageError
 from sklearn.neighbors import NearestNeighbors
-from visualization.plot import plot_clustering_on_umap
+from .plot import plot_clustering_on_umap
 
 
 def save_clustering_results(
@@ -246,23 +246,30 @@ def _write_index_html(
     summary_rows: list[dict],
     cluster_df: pd.DataFrame,
 ) -> None:
-    rows_html = "\n".join(
-        (
+    metrics_by_cluster = cluster_df.set_index("cluster")
+    table_rows = []
+
+    for row in summary_rows:
+        cluster = row["cluster"]
+        if cluster in metrics_by_cluster.index:
+            metrics = metrics_by_cluster.loc[cluster]
+            dbcv = _format_metric(metrics["dbcv"])
+            cosine_similarity = _format_metric(metrics["cosine_similarity"])
+        else:
+            dbcv = "NA"
+            cosine_similarity = "NA"
+
+        table_rows.append(
             "<tr>"
             f"<td><a href=\"{escape(row['html'])}\">"
             f"{escape(row['label'])}</a></td>"
             f"<td>{row['size']}</td>"
+            f"<td>{dbcv}</td>"
+            f"<td>{cosine_similarity}</td>"
             "</tr>"
         )
-        for row in summary_rows
-    )
-    metrics_html = cluster_df.to_html(
-        index=False,
-        border=0,
-        float_format=lambda value: f"{value:.4f}",
-        na_rep="NA",
-        classes="metrics",
-    )
+
+    rows_html = "\n".join(table_rows)
 
     output_path.write_text(
         _html_document(
@@ -287,18 +294,24 @@ def _write_index_html(
     <tr>
       <th>Cluster</th>
       <th>Size</th>
+      <th>DBCV</th>
+      <th>Cosine similarity</th>
     </tr>
   </thead>
   <tbody>
     {rows_html}
   </tbody>
 </table>
-<h2>Cluster metrics</h2>
-{metrics_html}
 """,
         ),
         encoding="utf-8",
     )
+
+
+def _format_metric(value: float) -> str:
+    if pd.isna(value):
+        return "NA"
+    return f"{float(value):.4f}"
 
 
 def _write_cluster_html(

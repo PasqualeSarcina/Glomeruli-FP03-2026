@@ -22,7 +22,7 @@ from clustering.cosine import mean_intracluster_cosine
 from clustering.hdbscan.consensus_dbcv import dbcv_cluster_consensus
 from clustering.hdbscan.fit import fit_umap_hdbscan
 from clustering.hdbscan.params import make_umap_hdbscan_grid_params
-from visualization.samples_plot import save_clustering_results
+from visualization.visualize_clustering import save_clustering_results
 from clustering.hdbscan.score import compute_clustering_score
 
 
