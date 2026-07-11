@@ -8,31 +8,26 @@ def mean_intracluster_cosine(
     min_cluster_size: int = 2,
 ):
     """
-    Calcola la cosine similarity media intra-cluster.
-
-    X deve essere già L2-normalizzato.
-    labels può venire da HDBSCAN, Leiden, KMeans, GMM, consensus, ecc.
+    Compute the pair-weighted mean cosine similarity within clusters.
 
     Parameters
     ----------
     X : np.ndarray
-        Embedding pre-UMAP, preferibilmente L2-normalizzato.
+        L2-normalized sample embeddings.
 
     labels : np.ndarray
-        Labels del clustering.
+        Cluster label for each sample.
 
     noise_label : int or None
-        Label del rumore.
-        - HDBSCAN: noise_label=-1
-        - Leiden: noise_label=None oppure -1 se non hai noise
+        Label to exclude as noise, or ``None`` to include every label.
 
     min_cluster_size : int
-        Cluster più piccoli di questa soglia vengono ignorati.
+        Ignore clusters smaller than this value.
 
     Returns
     -------
     float
-        Cosine similarity media intra-cluster, pesata per numero di coppie.
+        Weighted mean similarity, or NaN if no cluster can be evaluated.
     """
 
     X = np.asarray(X)
@@ -55,16 +50,13 @@ def mean_intracluster_cosine(
 
         Xc = X[idx]
 
-        # Somma vettoriale degli embedding del cluster
+        # Derive the pairwise sum from the cluster's vector sum.
         s = Xc.sum(axis=0)
 
-        # Somma di tutte le cosine similarity incluse le diagonali
         total_sim_including_diag = np.dot(s, s)
 
-        # Rimuovo le self-similarity = 1
         total_sim_excluding_diag = total_sim_including_diag - n
 
-        # Numero di coppie ordinate i != j
         n_pairs = n * (n - 1)
 
         mean_cos = total_sim_excluding_diag / n_pairs

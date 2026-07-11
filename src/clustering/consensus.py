@@ -4,70 +4,57 @@ from sklearn.cluster import AgglomerativeClustering
 
 
 def consensus_clustering(
-    label_runs,
-    n_clusters="median",
-    noise_label=-1,
-    max_noise_frequency=0.50,
-    min_consensus_strength=0.30,
-    min_final_cluster_size=5,
-    allow_final_noise=True,
+        label_runs,
+        n_clusters="median",
+        noise_label=-1,
+        max_noise_frequency=0.50,
+        min_consensus_strength=0.30,
+        min_final_cluster_size=5,
+        allow_final_noise=True,
 ):
     """
-    Consensus clustering da labels multiple.
-
-    Funziona sia con HDBSCAN sia con Leiden.
+    Build consensus labels from multiple clustering runs.
 
     Parameters
     ----------
     label_runs : array-like, shape (n_runs, n_samples)
-        Labels delle diverse run.
+        Cluster labels from each run.
 
     n_clusters : int, "median", or "mode"
-        Numero di cluster finali:
-        - "median": mediana del numero di cluster nelle run
-        - "mode": numero di cluster più frequente nelle run
-        - int: numero fissato manualmente
+        Final cluster count or a rule for deriving it from the runs.
 
     noise_label : int or None
-        Label usata per il noise.
-        - Per HDBSCAN: noise_label=-1
-        - Per Leiden: noise_label=None
+        Label used for noise. Use ``None`` if noise is not defined.
 
     max_noise_frequency : float
-        Usato solo se noise_label non è None.
-        Esclude un punto se è noise in più di questa frazione di run.
+        Maximum fraction of runs in which a sample may be noise.
 
     min_consensus_strength : float
-        Rimuove un punto se la sua co-associazione media col cluster finale
-        è sotto questa soglia.
+        Minimum mean co-association within the final cluster.
 
     min_final_cluster_size : int
-        Cluster finali più piccoli di questa soglia vengono rimarcati come noise,
-        se allow_final_noise=True.
+        Minimum size retained when final noise is allowed.
 
     allow_final_noise : bool
-        Se True, punti deboli o cluster troppo piccoli diventano -1.
-        Se False, tutti i punti rimangono assegnati.
+        Mark weak samples and small clusters as ``-1`` when true.
 
     Returns
     -------
-    labels_final : np.ndarray, shape (n_samples,)
-        Labels finali del consensus clustering.
+    np.ndarray, shape (n_samples,)
+        Final consensus labels.
     """
 
     label_runs = np.asarray(label_runs)
 
     if label_runs.ndim != 2:
-        raise ValueError("label_runs deve avere shape (n_runs, n_samples).")
+        raise ValueError("label_runs must have shape (n_runs, n_samples).")
 
     n_runs, n_samples = label_runs.shape
 
     if n_runs < 2:
-        raise ValueError("Servono almeno 2 run per fare consensus clustering.")
+        raise ValueError("Consensus clustering requires at least two runs.")
 
-    # ------------------------------------------------------------
-    # 1. Numero di cluster per run
-    # ------------------------------------------------------------
+    # Count clusters in each run.
     ks = []
 
     for labels in label_runs:
@@ -95,13 +82,11 @@ def consensus_clustering(
         n_clusters_final = int(n_clusters)
 
     else:
-        raise ValueError("n_clusters deve essere int, 'median' oppure 'mode'.")
+        raise ValueError("n_clusters must be an int, 'median', or 'mode'.")
 
     n_clusters_final = max(1, n_clusters_final)
 
-    # ------------------------------------------------------------
-    # 2. Matrice di consenso
-    # ------------------------------------------------------------
+    # Build the co-association matrix.
     same_cluster = np.zeros((n_samples, n_samples), dtype=np.float32)
     co_observed = np.zeros((n_samples, n_samples), dtype=np.float32)
 
@@ -132,9 +117,7 @@ def consensus_clustering(
 
     np.fill_diagonal(consensus, 1.0)
 
-    # ------------------------------------------------------------
-    # 3. Punti eleggibili
-    # ------------------------------------------------------------
+    # Keep samples that are not too frequently marked as noise.
     if noise_label is None:
         noise_frequency = np.zeros(n_samples, dtype=np.float32)
     else:
@@ -153,36 +136,25 @@ def consensus_clustering(
 
     n_clusters_used = min(n_clusters_final, max_reasonable_k)
 
-    # ------------------------------------------------------------
-    # 4. Clustering finale sulla matrice di consenso
-    # ------------------------------------------------------------
+    # Cluster eligible samples using consensus distance.
     consensus_sub = consensus[np.ix_(eligible_idx, eligible_idx)]
 
     distance_sub = 1.0 - consensus_sub
     distance_sub = np.clip(distance_sub, 0.0, 1.0)
     np.fill_diagonal(distance_sub, 0.0)
 
-    try:
-        model = AgglomerativeClustering(
-            n_clusters=n_clusters_used,
-            metric="precomputed",
-            linkage="average",
-        )
-    except TypeError:
-        model = AgglomerativeClustering(
-            n_clusters=n_clusters_used,
-            affinity="precomputed",
-            linkage="average",
-        )
+    model = AgglomerativeClustering(
+        n_clusters=n_clusters_used,
+        metric="precomputed",
+        linkage="average",
+    )
 
     labels_sub = model.fit_predict(distance_sub)
 
     labels_raw = np.full(n_samples, -1, dtype=int)
     labels_raw[eligible_idx] = labels_sub
 
-    # ------------------------------------------------------------
-    # 5. Consensus strength media per punto
-    # ------------------------------------------------------------
+    # Compute each sample's mean within-cluster consensus strength.
     consensus_strength = np.zeros(n_samples, dtype=np.float32)
 
     for c in sorted(set(labels_raw) - {-1}):
@@ -199,9 +171,7 @@ def consensus_clustering(
 
     labels_filtered = labels_raw.copy()
 
-    # ------------------------------------------------------------
-    # 6. Filtro punti deboli
-    # ------------------------------------------------------------
+    # Remove weak samples and undersized clusters.
     if allow_final_noise:
         weak = consensus_strength < min_consensus_strength
         labels_filtered[weak] = -1
@@ -212,9 +182,7 @@ def consensus_clustering(
             if len(idx) < min_final_cluster_size:
                 labels_filtered[idx] = -1
 
-    # ------------------------------------------------------------
-    # 7. Reindex finale
-    # ------------------------------------------------------------
+    # Relabel final clusters with consecutive integers.
     labels_final = np.full(n_samples, -1, dtype=int)
 
     final_clusters = sorted(set(labels_filtered) - {-1})
