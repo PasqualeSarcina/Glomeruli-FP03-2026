@@ -18,11 +18,4 @@ def make_umap_hdbscan_grid_params(
 
     grid = list(ParameterGrid(param_grid))
 
-    # Remove configurations where min_samples is greater than min_cluster_size
-    grid = [
-        params
-        for params in grid
-        if params["min_samples"] <= params["min_cluster_size"]
-    ]
-
     return grid

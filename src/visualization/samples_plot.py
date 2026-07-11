@@ -11,35 +11,48 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from matplotlib.axes import Axes
-from matplotlib.figure import Figure
 from PIL import Image, UnidentifiedImageError
 from sklearn.neighbors import NearestNeighbors
+from visualization.plot import plot_clustering_on_umap
 
 
-def show_clustering_samples(
+def save_clustering_results(
+    embeddings: np.ndarray,
     labels: Sequence[int],
-    probabilities: Sequence[float] | np.ndarray,
     image_paths: Sequence[str | Path],
-    x: int,
-    base_dir: str | Path | None,
-    image_size: float,
-) -> tuple[Figure, np.ndarray]:
+    cluster_df: pd.DataFrame,
+    x: int = 10,
+    base_dir: str | Path | None = None,
+    image_size: float = 3.0,
+) -> None:
     """
-    Show the top x images per cluster ordered by descending probability.
+    Save a report containing up to x images per cluster and cluster metrics.
 
     The function also creates:
     - clustering results/<timestamp>/samples_per_cluster.png
+    - clustering results/<timestamp>/umap_clusters.png
     - clustering results/<timestamp>/index.html
     - clustering results/<timestamp>/manifest.csv
+    - clustering results/<timestamp>/cluster_metrics.csv
     - clustering results/<timestamp>/cluster_<label>.html for every cluster
     - clustering results/<timestamp>/noise.html when HDBSCAN noise is present.
     """
 
+    embeddings_array = np.asarray(embeddings)
     labels_array = np.asarray(labels)
     image_paths = list(image_paths)
 
+    if embeddings_array.ndim != 2:
+        raise ValueError("embeddings must be a 2D array.")
+
     if labels_array.ndim != 1:
         raise ValueError("labels must be a 1D array.")
+
+    if embeddings_array.shape[0] != labels_array.shape[0]:
+        raise ValueError("embeddings and labels must have the same length.")
+
+    if labels_array.shape[0] < 3:
+        raise ValueError("At least 3 samples are required for the UMAP plot.")
 
     if len(image_paths) != labels_array.shape[0]:
         raise ValueError("image_paths and labels must have the same length.")
@@ -50,10 +63,12 @@ def show_clustering_samples(
     if image_size <= 0:
         raise ValueError("image_size must be positive.")
 
-    assigned_scores = _assigned_cluster_probabilities(
-        probabilities,
-        labels_array,
-    )
+    required_columns = {"cluster", "size", "dbcv", "cosine_similarity"}
+    missing_columns = required_columns - set(cluster_df.columns)
+    if missing_columns:
+        raise ValueError(
+            f"cluster_df is missing columns: {sorted(missing_columns)}"
+        )
 
     cluster_labels = _cluster_labels(labels_array, include_noise=False)
 
@@ -72,10 +87,7 @@ def show_clustering_samples(
     for row, cluster_label in enumerate(cluster_labels):
 
         cluster_indices = np.flatnonzero(labels_array == cluster_label)
-        selected_indices = _sort_indices_by_score(
-            indices=cluster_indices,
-            assigned_scores=assigned_scores,
-        )[:x]
+        selected_indices = cluster_indices[:x]
 
         for column in range(x):
 
@@ -103,13 +115,7 @@ def show_clustering_samples(
 
             _show_image(axis, image_path)
 
-            axis.set_title(
-                _sample_title(
-                    sample_index=sample_index,
-                    assigned_scores=assigned_scores,
-                ),
-                fontsize=9,
-            )
+            axis.set_title(f"id={sample_index}", fontsize=9)
 
     figure.suptitle("Samples per cluster")
     figure.tight_layout()
@@ -119,17 +125,31 @@ def show_clustering_samples(
         dpi=300,
         bbox_inches="tight",
     )
+    umap_figure, _ = plot_clustering_on_umap(
+        embeddings=embeddings_array,
+        labels=labels_array,
+        mode="2d",
+        title="Best consensus clustering su UMAP 2D",
+        n_neighbors=min(
+            200,
+            max(2, round(0.05 * len(labels_array))),
+            len(labels_array) - 1,
+        ),
+        min_dist=0.02,
+        metric="cosine",
+        save_path=results_dir / "umap_clusters.png",
+        show=False,
+    )
     _write_html_report(
         labels=labels_array,
-        assigned_scores=assigned_scores,
         image_paths=image_paths,
+        cluster_df=cluster_df,
         base_dir=base_dir,
         output_dir=results_dir,
     )
 
-    plt.show()
-
-    return figure, axes
+    plt.close(figure)
+    plt.close(umap_figure)
 
 
 def _create_results_dir() -> Path:
@@ -153,30 +173,26 @@ def _repository_root() -> Path:
 
 def _write_html_report(
     labels: np.ndarray,
-    assigned_scores: np.ndarray,
     image_paths: Sequence[str | Path],
+    cluster_df: pd.DataFrame,
     base_dir: str | Path | None,
     output_dir: Path,
 ) -> None:
     manifest = _build_manifest(
         labels=labels,
-        assigned_scores=assigned_scores,
         image_paths=image_paths,
         base_dir=base_dir,
         output_dir=output_dir,
     )
     manifest.to_csv(output_dir / "manifest.csv", index=False)
+    cluster_df.to_csv(output_dir / "cluster_metrics.csv", index=False)
 
     summary_rows = []
 
     for cluster_label in _cluster_labels(labels, include_noise=True):
         cluster_manifest = manifest.loc[
             manifest["cluster"] == cluster_label
-        ].sort_values(
-            by="probability",
-            ascending=False,
-            na_position="last",
-        )
+        ]
 
         cluster_html = _cluster_html_filename(cluster_label)
 
@@ -190,19 +206,18 @@ def _write_html_report(
             "cluster": int(cluster_label),
             "label": _format_cluster_label(cluster_label),
             "size": int(len(cluster_manifest)),
-            "mean_probability": float(cluster_manifest["probability"].mean()),
             "html": cluster_html,
         })
 
     _write_index_html(
         output_path=output_dir / "index.html",
         summary_rows=summary_rows,
+        cluster_df=cluster_df,
     )
 
 
 def _build_manifest(
     labels: np.ndarray,
-    assigned_scores: np.ndarray,
     image_paths: Sequence[str | Path],
     base_dir: str | Path | None,
     output_dir: Path,
@@ -211,20 +226,14 @@ def _build_manifest(
 
     for cluster_label in _cluster_labels(labels, include_noise=True):
         cluster_indices = np.flatnonzero(labels == cluster_label)
-        sorted_indices = _sort_indices_by_score(
-            indices=cluster_indices,
-            assigned_scores=assigned_scores,
-        )
 
-        for sample_index in sorted_indices:
+        for sample_index in cluster_indices:
             sample_index = int(sample_index)
             resolved_path = _resolve_path(image_paths[sample_index], base_dir)
-            probability = float(assigned_scores[sample_index])
 
             rows.append({
                 "id": sample_index,
                 "cluster": int(cluster_label),
-                "probability": probability if np.isfinite(probability) else np.nan,
                 "image_path": str(resolved_path),
                 "image_href": _relative_href(resolved_path, output_dir),
             })
@@ -232,17 +241,27 @@ def _build_manifest(
     return pd.DataFrame(rows)
 
 
-def _write_index_html(output_path: Path, summary_rows: list[dict]) -> None:
+def _write_index_html(
+    output_path: Path,
+    summary_rows: list[dict],
+    cluster_df: pd.DataFrame,
+) -> None:
     rows_html = "\n".join(
         (
             "<tr>"
             f"<td><a href=\"{escape(row['html'])}\">"
             f"{escape(row['label'])}</a></td>"
             f"<td>{row['size']}</td>"
-            f"<td>{_format_probability(row['mean_probability'])}</td>"
             "</tr>"
         )
         for row in summary_rows
+    )
+    metrics_html = cluster_df.to_html(
+        index=False,
+        border=0,
+        float_format=lambda value: f"{value:.4f}",
+        na_rep="NA",
+        classes="metrics",
     )
 
     output_path.write_text(
@@ -250,25 +269,32 @@ def _write_index_html(output_path: Path, summary_rows: list[dict]) -> None:
             title="Clustering results",
             body=f"""
 <h1>Clustering results</h1>
-<p><a href="manifest.csv">manifest.csv</a></p>
+<p><a href="manifest.csv">manifest.csv</a> | <a href="cluster_metrics.csv">cluster_metrics.csv</a></p>
+<figure>
+  <a href="umap_clusters.png">
+    <img class="preview umap-preview" src="umap_clusters.png" alt="Clusters on UMAP 2D">
+  </a>
+  <figcaption>Best consensus clustering su UMAP 2D</figcaption>
+</figure>
 <figure>
   <a href="samples_per_cluster.png">
     <img class="preview" src="samples_per_cluster.png" alt="Samples per cluster">
   </a>
-  <figcaption>Top samples per cluster</figcaption>
+  <figcaption>Samples per cluster</figcaption>
 </figure>
 <table>
   <thead>
     <tr>
       <th>Cluster</th>
       <th>Size</th>
-      <th>Mean probability</th>
     </tr>
   </thead>
   <tbody>
     {rows_html}
   </tbody>
 </table>
+<h2>Cluster metrics</h2>
+{metrics_html}
 """,
         ),
         encoding="utf-8",
@@ -304,7 +330,6 @@ def _write_cluster_html(
 def _sample_card_html(row: pd.Series) -> str:
     image_href = escape(str(row["image_href"]))
     image_path = escape(str(row["image_path"]))
-    probability = _format_probability(row["probability"])
     sample_id = int(row["id"])
 
     return f"""
@@ -314,7 +339,6 @@ def _sample_card_html(row: pd.Series) -> str:
   </a>
   <div class="meta">
     <div><strong>id</strong>: {sample_id}</div>
-    <div><strong>p</strong>: {probability}</div>
     <div class="path">{image_path}</div>
   </div>
 </article>
@@ -351,6 +375,9 @@ def _html_document(title: str, body: str) -> str:
     .preview {{
       border: 1px solid #d9e2ec;
       max-width: min(100%, 1200px);
+    }}
+    .umap-preview {{
+      max-width: min(100%, 680px);
     }}
     .grid {{
       display: grid;
@@ -389,95 +416,6 @@ def _relative_href(path: Path, output_dir: Path) -> str:
     return Path(os.path.relpath(path, start=output_dir)).as_posix()
 
 
-def _format_probability(value: float) -> str:
-    if pd.isna(value):
-        return "NA"
-
-    return f"{float(value):.3f}"
-
-
-def _sort_indices_by_score(
-    indices: np.ndarray,
-    assigned_scores: np.ndarray,
-) -> np.ndarray:
-    scores = np.asarray(assigned_scores[indices], dtype=float)
-    finite_mask = np.isfinite(scores)
-    finite_indices = indices[finite_mask]
-    finite_scores = scores[finite_mask]
-    non_finite_indices = indices[~finite_mask]
-
-    sorted_finite_indices = finite_indices[np.argsort(-finite_scores, kind="stable")]
-
-    return np.concatenate([sorted_finite_indices, non_finite_indices])
-
-
-def _sample_title(
-    sample_index: int,
-    assigned_scores: np.ndarray,
-) -> str:
-    score = float(assigned_scores[sample_index])
-
-    if np.isfinite(score):
-        return f"id={sample_index}\np={score:.3f}"
-
-    return f"id={sample_index}\np=NA"
-
-
-def _assigned_cluster_probabilities(
-    probabilities: Sequence[float] | np.ndarray | None,
-    labels: np.ndarray,
-) -> np.ndarray:
-    """
-    Restituisce uno score per ogni sample.
-
-    Se probabilities è None, restituisce un array di 1.
-    Questo permette di usare la funzione anche con Leiden.
-    """
-
-    if probabilities is None:
-        return np.ones(labels.shape[0], dtype=float)
-
-    probabilities_array = np.asarray(probabilities, dtype=float)
-
-    if probabilities_array.ndim == 1:
-
-        if probabilities_array.shape[0] != labels.shape[0]:
-            raise ValueError(
-                "probabilities and labels must have the same length."
-            )
-
-        return probabilities_array
-
-    if probabilities_array.ndim == 2:
-
-        if probabilities_array.shape[0] != labels.shape[0]:
-            raise ValueError(
-                "probabilities and labels must have the same length."
-            )
-
-        if np.any((labels >= probabilities_array.shape[1]) & (labels != -1)):
-            raise ValueError(
-                "2D probabilities require non-noise labels to be valid "
-                "column indices."
-            )
-
-        assigned = np.zeros(labels.shape[0], dtype=float)
-
-        non_noise_mask = labels != -1
-
-        row_indices = np.arange(labels.shape[0])[non_noise_mask]
-        column_indices = labels[non_noise_mask].astype(int)
-
-        assigned[non_noise_mask] = probabilities_array[
-            row_indices,
-            column_indices,
-        ]
-
-        return assigned
-
-    raise ValueError("probabilities must be None, a 1D array or a 2D array.")
-
-
 def _cluster_labels(labels: np.ndarray, include_noise: bool) -> list[int]:
     unique_labels = [int(label) for label in np.unique(labels)]
     if not include_noise:
@@ -512,7 +450,7 @@ def _cluster_html_filename(label: int) -> str:
     return "noise.html" if int(label) == -1 else f"cluster_{int(label)}.html"
 
 
-__all__ = ["show_clustering_samples"]
+__all__ = ["save_clustering_results"]
 
 
 
