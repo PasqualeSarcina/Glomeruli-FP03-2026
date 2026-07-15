@@ -131,6 +131,7 @@ def _fit_umap(
         n_neighbors=n_neighbors,
         min_dist=min_dist,
         metric=metric,
+        random_state=42
     )
     return reducer.fit_transform(embeddings)
 

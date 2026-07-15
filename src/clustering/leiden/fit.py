@@ -93,19 +93,29 @@ def _build_knn_graph(
     return graph
 
 
-def fit_leiden(
+def fit_umap_leiden(
         X,
-        seed,
+        n_components,
+        n_neighbors,
         k,
         resolution,
+        seed=None,
+        umap_metric="cosine",
         leiden_metric="euclidean",
         n_iterations=-1,
         weight_mode="inverse",
         partition_type="rb",
 ):
+    umap_embeddings = umap.UMAP(
+        n_components=n_components,
+        metric=umap_metric,
+        n_neighbors=n_neighbors,
+        random_state=seed,
+        min_dist=0.02
+    ).fit_transform(X)
 
     graph = _build_knn_graph(
-        X=X,
+        X=umap_embeddings,
         k=k,
         metric=leiden_metric,
         weight_mode=weight_mode,
@@ -131,4 +141,4 @@ def fit_leiden(
 
     labels = np.asarray(partition.membership, dtype=int)
 
-    return labels, graph, partition
+    return labels, umap_embeddings, graph

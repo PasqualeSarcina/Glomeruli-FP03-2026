@@ -24,9 +24,13 @@ def save_clustering_results(
     x: int = 10,
     base_dir: str | Path | None = None,
     image_size: float = 3.0,
+    random_state: int | None = None,
 ) -> None:
     """
-    Save a report containing up to x images per cluster and cluster metrics.
+    Save a report containing up to x images per cluster and the data supplied
+    in ``cluster_df``. Every DataFrame column is rendered without requiring a
+    predefined schema. The PNG overview displays a random sample from each
+    cluster; ``random_state`` can be set to make the selection reproducible.
 
     The function also creates:
     - clustering results/<timestamp>/samples_per_cluster.png
@@ -63,12 +67,8 @@ def save_clustering_results(
     if image_size <= 0:
         raise ValueError("image_size must be positive.")
 
-    required_columns = {"cluster", "size", "dbcv", "cosine_similarity"}
-    missing_columns = required_columns - set(cluster_df.columns)
-    if missing_columns:
-        raise ValueError(
-            f"cluster_df is missing columns: {sorted(missing_columns)}"
-        )
+    if not isinstance(cluster_df, pd.DataFrame):
+        raise TypeError("cluster_df must be a pandas DataFrame.")
 
     cluster_labels = _cluster_labels(labels_array, include_noise=False)
 
@@ -76,6 +76,7 @@ def save_clustering_results(
         raise ValueError("No clusters to display.")
 
     results_dir = _create_results_dir()
+    rng = np.random.default_rng(random_state)
 
     figure, axes = plt.subplots(
         len(cluster_labels),
@@ -87,7 +88,11 @@ def save_clustering_results(
     for row, cluster_label in enumerate(cluster_labels):
 
         cluster_indices = np.flatnonzero(labels_array == cluster_label)
-        selected_indices = cluster_indices[:x]
+        selected_indices = rng.choice(
+            cluster_indices,
+            size=min(x, len(cluster_indices)),
+            replace=False,
+        )
 
         for column in range(x):
 
@@ -246,30 +251,11 @@ def _write_index_html(
     summary_rows: list[dict],
     cluster_df: pd.DataFrame,
 ) -> None:
-    metrics_by_cluster = cluster_df.set_index("cluster")
-    table_rows = []
-
-    for row in summary_rows:
-        cluster = row["cluster"]
-        if cluster in metrics_by_cluster.index:
-            metrics = metrics_by_cluster.loc[cluster]
-            dbcv = _format_metric(metrics["dbcv"])
-            cosine_similarity = _format_metric(metrics["cosine_similarity"])
-        else:
-            dbcv = "NA"
-            cosine_similarity = "NA"
-
-        table_rows.append(
-            "<tr>"
-            f"<td><a href=\"{escape(row['html'])}\">"
-            f"{escape(row['label'])}</a></td>"
-            f"<td>{row['size']}</td>"
-            f"<td>{dbcv}</td>"
-            f"<td>{cosine_similarity}</td>"
-            "</tr>"
-        )
-
-    rows_html = "\n".join(table_rows)
+    cluster_pages = {
+        int(row["cluster"]): str(row["html"])
+        for row in summary_rows
+    }
+    cluster_df_html = _dataframe_html(cluster_df, cluster_pages)
 
     output_path.write_text(
         _html_document(
@@ -289,29 +275,90 @@ def _write_index_html(
   </a>
   <figcaption>Samples per cluster</figcaption>
 </figure>
-<table>
-  <thead>
-    <tr>
-      <th>Cluster</th>
-      <th>Size</th>
-      <th>DBCV</th>
-      <th>Cosine similarity</th>
-    </tr>
-  </thead>
-  <tbody>
-    {rows_html}
-  </tbody>
-</table>
+<h2>Cluster data</h2>
+{cluster_df_html}
 """,
         ),
         encoding="utf-8",
     )
 
 
-def _format_metric(value: float) -> str:
-    if pd.isna(value):
+def _dataframe_html(
+    dataframe: pd.DataFrame,
+    cluster_pages: dict[int, str] | None = None,
+) -> str:
+    """Render a DataFrame without making assumptions about its columns."""
+    if dataframe.shape[1] == 0:
+        return '<p class="empty-table">No columns available.</p>'
+
+    cluster_pages = cluster_pages or {}
+    cluster_column = next(
+        (
+            position
+            for position, column in enumerate(dataframe.columns)
+            if str(column).strip().casefold() == "cluster"
+        ),
+        None,
+    )
+    header_html = "".join(
+        f"<th>{escape(str(column))}</th>"
+        for column in dataframe.columns
+    )
+    row_items = []
+
+    for values in dataframe.itertuples(index=False, name=None):
+        cells = []
+        for position, value in enumerate(values):
+            formatted_value = escape(_format_table_value(value))
+            if position == cluster_column:
+                cluster_page = _cluster_page(value, cluster_pages)
+                if cluster_page is not None:
+                    formatted_value = (
+                        f'<a href="{escape(cluster_page)}">'
+                        f"{formatted_value}</a>"
+                    )
+            cells.append(f"<td>{formatted_value}</td>")
+
+        cells_html = "".join(cells)
+        row_items.append(f"<tr>{cells_html}</tr>")
+
+    if row_items:
+        body_html = "\n".join(row_items)
+    else:
+        body_html = (
+            f'<tr><td colspan="{dataframe.shape[1]}" '
+            'class="empty-table">No rows available.</td></tr>'
+        )
+
+    return f"""
+<div class="table-scroll">
+  <table>
+    <thead><tr>{header_html}</tr></thead>
+    <tbody>{body_html}</tbody>
+  </table>
+</div>
+"""
+
+
+def _cluster_page(value: object, cluster_pages: dict[int, str]) -> str | None:
+    try:
+        cluster_label = int(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return cluster_pages.get(cluster_label)
+
+
+def _format_table_value(value: object) -> str:
+    try:
+        is_missing = pd.isna(value)
+    except (TypeError, ValueError):
+        is_missing = False
+
+    if isinstance(is_missing, (bool, np.bool_)) and is_missing:
         return "NA"
-    return f"{float(value):.4f}"
+    if isinstance(value, (float, np.floating)):
+        return f"{float(value):.4f}"
+    return str(value)
 
 
 def _write_cluster_html(
@@ -376,6 +423,13 @@ def _html_document(title: str, body: str) -> str:
       border-collapse: collapse;
       margin-top: 18px;
       min-width: 420px;
+    }}
+    .table-scroll {{
+      overflow-x: auto;
+    }}
+    .empty-table {{
+      color: #52606d;
+      font-style: italic;
     }}
     th, td {{
       border-bottom: 1px solid #d9e2ec;
