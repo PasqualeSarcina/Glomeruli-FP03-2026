@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=segnet_run6
+#SBATCH --job-name=segnet_run7
 #SBATCH --partition=gpu_a40
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
@@ -48,18 +48,19 @@ export LD_LIBRARY_PATH="$(find "$NVIDIA_DIR" -name lib -type d | tr '\n' ':')${L
 
 python -c "import tensorflow as tf; print('TF', tf.__version__); print('GPU', tf.config.list_physical_devices('GPU'))"
 
-RESULTS=$REPO/models/hpc-run6-$SLURM_JOB_ID
+RESULTS=$REPO/models/hpc-run7-$SLURM_JOB_ID
 mkdir -p "$RESULTS"
 
-# ---- Run 6: Run 4 recipe + regularization (dropout + brightness jitter) ----
-# Only difference vs Run 4 (1742197) is the two regularization knobs below,
-# so any change in test IoU is attributable to regularization.
+# ---- Run 7: Run 4 recipe + stronger augmentation (full D4 + hflip + HED stain jitter) ----
+# The augmentation is the only change vs Run 4 (1742197): it attacks the
+# small-#slides domain gap without adding data. dropout/brightness are left OFF
+# because Run 6 showed they hurt on the test set.
 python scripts/training/train_hpc.py "$DATASET" \
     --batch-size 8 \
     --phase-1-epochs 10 --phase-1-lr 0.01 \
     --phase-2-epochs 20 --phase-2-lr 0.001 \
-    --dropout-rate 0.07 \
-    --brightness-delta 0.243 \
+    --flip-horizontal \
+    --stain-jitter 0.05 \
     --output-dir "$SIM/models"
 
 # Persist training results IMMEDIATELY, before evaluation, so an eval hiccup
@@ -68,11 +69,11 @@ rsync -a "$SIM/models/" "$RESULTS/"
 echo "Training results saved to $RESULTS"
 
 # ---- Test-set evaluation (inference only; defensive so it can't abort the job) ----
-# New Run 6 model
+# New Run 7 model
 python scripts/evaluation/evaluate.py "$SIM/models/best_model.keras" "$DATASET/test" \
-    --batch-size 8 --label "run6-$SLURM_JOB_ID" \
-    --output-json "$SIM/models/test_metrics_run6.json" \
-    || echo "WARN: Run 6 test evaluation failed"
+    --batch-size 8 --label "run7-$SLURM_JOB_ID" \
+    --output-json "$SIM/models/test_metrics_run7.json" \
+    || echo "WARN: Run 7 test evaluation failed"
 
 # Run 4 baseline model (lives under $HOME, not staged to scratch)
 if [ -f "$RUN4_MODEL" ]; then

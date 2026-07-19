@@ -25,6 +25,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.segmentation.dataset import SegmentationDataset
+from src.segmentation.segnet import tta_predict
 
 
 def parse_args() -> argparse.Namespace:
@@ -41,6 +42,9 @@ def parse_args() -> argparse.Namespace:
                    help="Optional name for this model in the printed/JSON output.")
     p.add_argument("--output-json", type=Path, default=None,
                    help="Optional path to write the metrics as JSON.")
+    p.add_argument("--tta", action="store_true",
+                   help="Test-time augmentation: average predictions over the 8 "
+                        "D4 orientations (free IoU boost, ~8x inference cost).")
     return p.parse_args()
 
 
@@ -66,7 +70,7 @@ def main() -> None:
     cm = tf.zeros((2, 2), dtype=tf.int64)
     n_batches = 0
     for images, masks in test_ds:
-        probs = model(images, training=False)                   # (B, H, W, 2)
+        probs = tta_predict(model, images) if args.tta else model(images, training=False)  # (B, H, W, 2)
         preds = tf.argmax(probs, axis=-1)                       # (B, H, W)
         y_true = tf.cast(tf.squeeze(masks, axis=-1), tf.int64)  # (B, H, W)
         cm += tf.math.confusion_matrix(
@@ -87,6 +91,8 @@ def main() -> None:
     mean_iou = float(np.mean(iou))
 
     label = args.label or args.model_path.name
+    if args.tta:
+        label += " +TTA"
     print(f"\n=== Test evaluation: {label} ===")
     print(f"Batches evaluated: {n_batches}")
     print(f"Confusion matrix [rows=true, cols=pred]:\n{cm.astype(np.int64)}")
@@ -99,6 +105,7 @@ def main() -> None:
             "label": label,
             "model_path": str(args.model_path),
             "split": str(args.dataset_split),
+            "tta": bool(args.tta),
             "iou_background": float(iou[0]),
             "iou_glomerulus": float(iou[1]),
             "mean_iou": mean_iou,

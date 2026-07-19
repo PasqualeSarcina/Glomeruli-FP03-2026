@@ -13,10 +13,23 @@ if str(PROJECT_ROOT) not in sys.path:
 from src.segmentation.dataset import SegmentationDataset
 from src.segmentation.segnet import (
     build_segnet_vgg19,
+    build_segnet_resnet50,
     compile_segnet,
     freeze_encoder,
     unfreeze_encoder,
+    freeze_resnet_encoder,
+    unfreeze_resnet_encoder,
 )
+
+# Encoder choice only swaps which build/freeze/unfreeze functions get used
+# below — the rest of the two-phase training loop (checkpointing, shared
+# MeanIoU, EarlyStopping, history) is identical for both, since that's what
+# makes this a fair one-axis comparison (see build_segnet_resnet50's
+# docstring in segnet.py).
+_ENCODERS = {
+    "vgg19": (build_segnet_vgg19, freeze_encoder, unfreeze_encoder),
+    "resnet50_swav": (build_segnet_resnet50, freeze_resnet_encoder, unfreeze_resnet_encoder),
+}
 
 
 def parse_args() -> argparse.Namespace:
@@ -29,7 +42,14 @@ def parse_args() -> argparse.Namespace:
         help="Path to the dataset root (must contain train/ and validation/ sub-folders).",
     )
     parser.add_argument("--batch-size", type=int, default=8)
-    parser.add_argument("--loss-fn", choices=("combined", "crossentropy"), default="combined")
+    parser.add_argument("--encoder", choices=tuple(_ENCODERS), default="vgg19",
+                        help="'vgg19' (ImageNet, Run 1-7 default) or "
+                             "'resnet50_swav' (pathology-pretrained, needs "
+                             "--encoder-weights).")
+    parser.add_argument("--encoder-weights", type=Path, default=None,
+                        help="Path to converted encoder weights (.weights.h5) "
+                             "from scripts/encoders/convert_swav_resnet50.py. "
+                             "Required when --encoder=resnet50_swav.")
 
     parser.add_argument("--phase-1-epochs", type=int, default=10,
                         help="Frozen-encoder warm-up epochs.")
@@ -46,6 +66,10 @@ def parse_args() -> argparse.Namespace:
                         help="Add random horizontal flip to training augmentation.")
     parser.add_argument("--brightness-delta", type=float, default=0.0,
                         help="Max delta for random brightness jitter. 0.0 disables.")
+    parser.add_argument("--stain-jitter", type=float, default=0.0,
+                        help="HED stain-augmentation strength (e.g. 0.05). 0.0 disables.")
+    parser.add_argument("--copy-paste", type=float, default=0.0,
+                        help="Copy-paste augmentation probability (e.g. 0.5). 0.0 disables.")
 
     parser.add_argument(
         "--output-dir",
@@ -64,6 +88,8 @@ def build_datasets(args: argparse.Namespace):
         augment=True,
         flip_horizontal=args.flip_horizontal,
         brightness_delta=args.brightness_delta,
+        stain_jitter=args.stain_jitter,
+        copy_paste=args.copy_paste,
     ).build()
 
     val_ds = SegmentationDataset(
@@ -109,14 +135,25 @@ def make_callbacks(
 def main() -> None:
     args = parse_args()
 
+    if args.encoder == "resnet50_swav" and args.encoder_weights is None:
+        raise SystemExit(
+            "--encoder=resnet50_swav requires --encoder-weights pointing to "
+            "the output of scripts/encoders/convert_swav_resnet50.py."
+        )
+
     print(f"TensorFlow {tf.__version__}")
     print(f"GPUs available: {tf.config.list_physical_devices('GPU')}")
+    print(f"Encoder: {args.encoder}")
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
     train_ds, val_ds = build_datasets(args)
 
-    model = build_segnet_vgg19(dropout_rate=args.dropout_rate)
+    build_fn, freeze_fn, unfreeze_fn = _ENCODERS[args.encoder]
+    if args.encoder == "resnet50_swav":
+        model = build_fn(dropout_rate=args.dropout_rate, encoder_weights_path=str(args.encoder_weights))
+    else:
+        model = build_fn(dropout_rate=args.dropout_rate)
 
     # Single shared MeanIoU instance across both phases. Without this, the
     # second compile() creates a fresh MeanIoU which Keras auto-suffixes
@@ -126,8 +163,8 @@ def main() -> None:
 
     # ----- Phase 1: frozen encoder warm-up -----
     print(f"\n=== Phase 1: frozen encoder, lr={args.phase_1_lr}, {args.phase_1_epochs} epochs ===")
-    freeze_encoder(model)
-    model = compile_segnet(model, initial_lr=args.phase_1_lr, loss_fn=args.loss_fn, miou_metric=miou)
+    freeze_fn(model)
+    model = compile_segnet(model, initial_lr=args.phase_1_lr, miou_metric=miou)
     model.summary()
 
     history_phase_1 = model.fit(
@@ -143,8 +180,8 @@ def main() -> None:
     phase_1_best = max(history_phase_1.history.get("val_mean_io_u", [-float("inf")]))
 
     print(f"\n=== Phase 2: unfrozen, lr={args.phase_2_lr}, {args.phase_2_epochs} epochs ===")
-    unfreeze_encoder(model)
-    model = compile_segnet(model, initial_lr=args.phase_2_lr, loss_fn=args.loss_fn, miou_metric=miou)
+    unfreeze_fn(model)
+    model = compile_segnet(model, initial_lr=args.phase_2_lr, miou_metric=miou)
 
     history_phase_2 = model.fit(
         train_ds,

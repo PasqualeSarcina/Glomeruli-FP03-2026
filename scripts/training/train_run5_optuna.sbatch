@@ -43,9 +43,6 @@ conda activate "$CONDA_ENV"
 NVIDIA_DIR="$CONDA_PREFIX/lib/python3.12/site-packages/nvidia"
 export LD_LIBRARY_PATH="$(find "$NVIDIA_DIR" -name lib -type d | tr '\n' ':')${LD_LIBRARY_PATH:-}"
 
-# Install optuna if not already present (fast no-op if cached)
-pip install optuna --quiet
-
 python -c "import tensorflow as tf; print('TF', tf.__version__); print('GPU', tf.config.list_physical_devices('GPU'))"
 
 DB_PATH="$SIM/optuna_run5.db"

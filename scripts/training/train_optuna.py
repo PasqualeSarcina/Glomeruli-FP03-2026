@@ -98,7 +98,7 @@ def _objective(trial: optuna.Trial, args: argparse.Namespace) -> float:
 
     # ----- Phase 1: frozen encoder -----
     freeze_encoder(model)
-    compile_segnet(model, initial_lr=PHASE_1_LR, loss_fn="combined", miou_metric=miou)
+    compile_segnet(model, initial_lr=PHASE_1_LR, miou_metric=miou)
 
     checkpoint = keras.callbacks.ModelCheckpoint(
         str(trial_dir / "best_model.keras"),
@@ -119,7 +119,7 @@ def _objective(trial: optuna.Trial, args: argparse.Namespace) -> float:
 
     # ----- Phase 2: full fine-tune -----
     unfreeze_encoder(model)
-    compile_segnet(model, initial_lr=phase2_lr, loss_fn="combined", miou_metric=miou)
+    compile_segnet(model, initial_lr=phase2_lr, miou_metric=miou)
 
     checkpoint2 = keras.callbacks.ModelCheckpoint(
         str(trial_dir / "best_model.keras"),

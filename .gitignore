@@ -228,5 +228,8 @@ models/
 dataset.zip
 slurm-*.out
 
+# Report deliverables (kept locally, not versioned)
+*.pdf
+
 # Claude
 .claude/

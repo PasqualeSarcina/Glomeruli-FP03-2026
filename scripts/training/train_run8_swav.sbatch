@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=segnet_run6
+#SBATCH --job-name=segnet_run8_swav
 #SBATCH --partition=gpu_a40
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
@@ -19,8 +19,19 @@ set -euo pipefail
 REPO=$HOME/Glomeruli-FP03-2026
 CONDA_ENV=glomeruli
 DATASET=$SCRATCH_FLASH/glomeruli-dataset          # pre-extracted patches (train/ validation/ test/)
-RUN4_MODEL=$REPO/models/hpc-run-1742197/best_model.keras   # baseline to also score on test
+ENCODER_WEIGHTS=$REPO/models/encoders/swav_resnet50.weights.h5   # from scripts/encoders/setup_and_convert.sh
+RUN7_MODEL=$REPO/models/hpc-run7-1797796/best_model.keras        # current best, to also score on test
 # --------------------------------
+
+# Fail fast, before spending any GPU allocation, if the one-time conversion
+# step hasn't been run yet. This must happen on the login node beforehand
+# (see scripts/encoders/setup_and_convert.sh) — compute nodes typically
+# can't reach GitHub to download the checkpoint.
+if [ ! -f "$ENCODER_WEIGHTS" ]; then
+    echo "ERROR: $ENCODER_WEIGHTS not found."
+    echo "Run this on the LOGIN node first: bash scripts/encoders/setup_and_convert.sh"
+    exit 1
+fi
 
 SIM=$SCRATCH_FLASH/glomeruli-segnet-$SLURM_JOB_ID
 mkdir -p "$SIM"
@@ -28,9 +39,13 @@ mkdir -p "$SIM"
 echo "Job $SLURM_JOB_ID on $(hostname)"
 echo "Sim dir: $SIM"
 echo "Dataset: $DATASET"
+echo "Encoder weights: $ENCODER_WEIGHTS"
 nvidia-smi || true
 
-# Stage code on scratch (skip venv, git, previous models)
+# Stage code on scratch (skip venv, git, previous models). Note the
+# converted encoder weights live under $REPO/models/encoders/, not on
+# scratch — same pattern as RUN4_MODEL in train_run6.sbatch/train_run7.sbatch,
+# referenced directly from $REPO since $HOME is visible from compute nodes too.
 rsync -a \
     --exclude='.venv' --exclude='.git' --exclude='models' --exclude='__pycache__' \
     "$REPO"/ "$SIM"/
@@ -48,18 +63,22 @@ export LD_LIBRARY_PATH="$(find "$NVIDIA_DIR" -name lib -type d | tr '\n' ':')${L
 
 python -c "import tensorflow as tf; print('TF', tf.__version__); print('GPU', tf.config.list_physical_devices('GPU'))"
 
-RESULTS=$REPO/models/hpc-run6-$SLURM_JOB_ID
+RESULTS=$REPO/models/hpc-run8-$SLURM_JOB_ID
 mkdir -p "$RESULTS"
 
-# ---- Run 6: Run 4 recipe + regularization (dropout + brightness jitter) ----
-# Only difference vs Run 4 (1742197) is the two regularization knobs below,
-# so any change in test IoU is attributable to regularization.
+# ---- Run 8: Run 7 recipe (D4 rotations + hflip + HED stain jitter), only
+# the encoder changes: pathology-pretrained ResNet50 (SwAV, Lunit) instead
+# of ImageNet-pretrained VGG19. Same decoder, same loss, same two-phase
+# schedule, same batch size — isolates the encoder-pretraining variable
+# exactly like Run 7 isolated the augmentation variable against Run 4.
 python scripts/training/train_hpc.py "$DATASET" \
+    --encoder resnet50_swav \
+    --encoder-weights "$ENCODER_WEIGHTS" \
     --batch-size 8 \
     --phase-1-epochs 10 --phase-1-lr 0.01 \
     --phase-2-epochs 20 --phase-2-lr 0.001 \
-    --dropout-rate 0.07 \
-    --brightness-delta 0.243 \
+    --flip-horizontal \
+    --stain-jitter 0.05 \
     --output-dir "$SIM/models"
 
 # Persist training results IMMEDIATELY, before evaluation, so an eval hiccup
@@ -68,20 +87,20 @@ rsync -a "$SIM/models/" "$RESULTS/"
 echo "Training results saved to $RESULTS"
 
 # ---- Test-set evaluation (inference only; defensive so it can't abort the job) ----
-# New Run 6 model
+# New Run 8 model
 python scripts/evaluation/evaluate.py "$SIM/models/best_model.keras" "$DATASET/test" \
-    --batch-size 8 --label "run6-$SLURM_JOB_ID" \
-    --output-json "$SIM/models/test_metrics_run6.json" \
-    || echo "WARN: Run 6 test evaluation failed"
+    --batch-size 8 --label "run8-$SLURM_JOB_ID" \
+    --output-json "$SIM/models/test_metrics_run8.json" \
+    || echo "WARN: Run 8 test evaluation failed"
 
-# Run 4 baseline model (lives under $HOME, not staged to scratch)
-if [ -f "$RUN4_MODEL" ]; then
-    python scripts/evaluation/evaluate.py "$RUN4_MODEL" "$DATASET/test" \
-        --batch-size 8 --label "run4-1742197" \
-        --output-json "$SIM/models/test_metrics_run4.json" \
-        || echo "WARN: Run 4 baseline evaluation failed"
+# Run 7 baseline model (current best, lives under $HOME, not staged to scratch)
+if [ -f "$RUN7_MODEL" ]; then
+    python scripts/evaluation/evaluate.py "$RUN7_MODEL" "$DATASET/test" \
+        --batch-size 8 --label "run7-1797796" \
+        --output-json "$SIM/models/test_metrics_run7.json" \
+        || echo "WARN: Run 7 baseline evaluation failed"
 else
-    echo "WARN: Run 4 model not found at $RUN4_MODEL — skipping baseline eval"
+    echo "WARN: Run 7 model not found at $RUN7_MODEL — skipping baseline eval"
 fi
 
 # Persist again to capture the test-metric JSONs alongside the model.
