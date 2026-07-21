@@ -1,0 +1,6 @@
+backbone,median intra/nearest-inter ratio,self-retrieval@5,self-retrieval@10,self-retrieval@20
+densenet201,0.6315222382545471,0.998,1.0,1.0
+xception,0.6263118386268616,0.995,0.999,1.0
+densenet169,0.6180543303489685,0.993,0.996,1.0
+mobilenet,0.7112106084823608,0.993,0.995,0.999
+nasnet,0.5655801296234131,0.986,0.997,0.999

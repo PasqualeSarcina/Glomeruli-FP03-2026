@@ -1,0 +1,12 @@
+backbone,n_samples,n_features,n_exact_duplicates,n_near_zero_norm,n_norm_outliers
+densenet201,677,1920,0,0,0
+densenet,677,1664,0,0,0
+dinov2_base_cls,677,768,0,0,0
+dinov2_base_patch,677,768,0,0,0
+dinov3_base_cls,677,768,0,0,1
+dinov3_base_patch,677,768,0,0,1
+kimianet_1000,677,1024,0,0,0
+kimianet_224,677,1024,0,0,1
+mobilenet,677,1024,0,0,0
+nasnet,677,4032,0,0,0
+xception,677,2048,0,0,0
