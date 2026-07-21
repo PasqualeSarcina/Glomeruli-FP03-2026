@@ -88,11 +88,26 @@ cd "$SIM"
 source "$HOME/miniconda3/etc/profile.d/conda.sh"
 conda activate "$CONDA_ENV"
 
-# The base 'glomeruli' env was built for segmentation (TF 2.21). Stage 3 adds
-# hdbscan / umap-learn / scikit-learn / keras-hub etc. — install the merged
-# requirements so the clustering + backbone stages have their deps. pip is
-# idempotent, so this is a no-op cost once the env is already satisfied.
-python -m pip install -r requirements.txt
+# The base 'glomeruli' env has TF 2.21 (GPU) + numpy/scipy/skimage/openslide.
+# Stage 3 only needs the clustering deps below — install just those.
+#
+# Two dependency traps this guards against (both would otherwise waste a run):
+#  1. keras-hub (needed ONLY by DINOv2/v3) pulls tensorflow-text, which caps
+#     tensorflow to <2.21 → conflicts with this env's TF 2.21 GPU build. That
+#     conflict aborted job 1841816. So keras-hub is NOT installed; the 2 DINO
+#     backbones are skipped (their import fails and hits the WARN guard below),
+#     the 6 CNN backbones + all clustering still run.
+#  2. umap-learn pulls numba, whose numpy ceiling can be below this env's numpy
+#     2.4. To stop pip from DOWNGRADING numpy (which would break TF and kill
+#     even the segmentation), we pin numpy to its current 2.4 line. If the
+#     clustering deps can't resolve under that pin, pip installs nothing and we
+#     fall through (|| echo) with TF intact — segmentation is never sacrificed
+#     to a Stage-3 dependency problem.
+# Validate the resolution WITHOUT a queue slot first (login node, env active):
+#     pip install --dry-run hdbscan umap-learn scikit-learn pandas matplotlib tqdm "numpy~=2.4.6"
+python -m pip install --quiet --upgrade-strategy only-if-needed \
+    hdbscan umap-learn scikit-learn pandas matplotlib tqdm "numpy~=2.4.6" \
+    || echo "WARN: Stage-3 clustering deps did not resolve — TF/segmentation unaffected; embedding/clustering stages may be skipped."
 
 # TF needs its bundled CUDA libs on LD_LIBRARY_PATH (they aren't auto-discovered).
 NVIDIA_DIR="$CONDA_PREFIX/lib/python3.12/site-packages/nvidia"
