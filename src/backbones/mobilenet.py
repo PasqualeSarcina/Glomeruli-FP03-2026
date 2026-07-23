@@ -18,8 +18,6 @@ class MobileNet(Backbone):
             name="mobilenet",
         )
         backbone.trainable = False
-        # Backbone._postprocess concatenates masked mean, max and std,
-        # so the final embedding contains three values per feature channel.
         hidden_dim = backbone.output_shape[-1]
 
         super().__init__(backbone, input_size, hidden_dim)
