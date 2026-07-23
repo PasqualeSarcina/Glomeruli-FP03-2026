@@ -45,7 +45,9 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from src.segmentation.dataset import SegmentationDataset
 from src.segmentation.segnet import (
-    build_segnet_vgg19, compile_segnet, freeze_encoder, unfreeze_encoder, tta_predict,
+    build_segnet_vgg19, build_segnet_resnet50, compile_segnet,
+    freeze_encoder, unfreeze_encoder, freeze_resnet_encoder, unfreeze_resnet_encoder,
+    tta_predict,
 )
 
 SLIDE_RE = re.compile(r"(RECHERCHE-\d+)")
@@ -104,16 +106,22 @@ def train_one_fold(train_pairs, test_pairs, args) -> tuple:
         batch_size=args.batch_size, shuffle=False, augment=False,
     ).build()
 
-    model = build_segnet_vgg19()
+    if args.encoder == "resnet50":
+        model = build_segnet_resnet50(encoder_weights_path=str(args.encoder_weights)
+                                      if args.encoder_weights else None)
+        freeze, unfreeze = freeze_resnet_encoder, unfreeze_resnet_encoder
+    else:
+        model = build_segnet_vgg19()
+        freeze, unfreeze = freeze_encoder, unfreeze_encoder
     miou = keras.metrics.MeanIoU(num_classes=2, sparse_y_pred=False)
 
     # Phase 1: frozen encoder warm-up (no validation, no callbacks).
-    freeze_encoder(model)
+    freeze(model)
     compile_segnet(model, initial_lr=args.phase_1_lr, miou_metric=miou)
     model.fit(train_ds, epochs=args.phase_1_epochs, verbose=2)
 
     # Phase 2: full fine-tune.
-    unfreeze_encoder(model)
+    unfreeze(model)
     compile_segnet(model, initial_lr=args.phase_2_lr, miou_metric=miou)
     model.fit(train_ds, epochs=args.phase_1_epochs + args.phase_2_epochs,
               initial_epoch=args.phase_1_epochs, verbose=2)
@@ -124,6 +132,11 @@ def train_one_fold(train_pairs, test_pairs, args) -> tuple:
 def main() -> None:
     ap = argparse.ArgumentParser(description="Leave-one-slide-out CV for SegNet-VGG19.")
     ap.add_argument("dataset_path", type=Path, help="Root with train/ validation/ test/ subfolders.")
+    ap.add_argument("--encoder", choices=["vgg19", "resnet50"], default="vgg19",
+                    help="Encoder backbone. 'resnet50' loads converted pathology weights.")
+    ap.add_argument("--encoder-weights", type=Path, default=None,
+                    help="Converted Keras encoder weights (.weights.h5) for --encoder resnet50 "
+                         "(see scripts/encoders/convert_swav_resnet50.py / setup_and_convert.sh).")
     ap.add_argument("--batch-size", type=int, default=8)
     ap.add_argument("--phase-1-epochs", type=int, default=10)
     ap.add_argument("--phase-1-lr", type=float, default=0.01)
@@ -136,7 +149,8 @@ def main() -> None:
                     help="Test-time augmentation (8x D4) when evaluating each fold.")
     ap.add_argument("--output-dir", type=Path, default=PROJECT_ROOT / "models" / "loso")
     args = ap.parse_args()
-    print(f"Config: copy_paste={args.copy_paste}  tta={args.tta}  stain_jitter={args.stain_jitter}")
+    print(f"Config: encoder={args.encoder}  weights={args.encoder_weights}  "
+          f"copy_paste={args.copy_paste}  tta={args.tta}  stain_jitter={args.stain_jitter}")
 
     print(f"TensorFlow {tf.__version__}, GPUs: {tf.config.list_physical_devices('GPU')}")
     args.output_dir.mkdir(parents=True, exist_ok=True)
