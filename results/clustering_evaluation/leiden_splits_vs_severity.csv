@@ -1,0 +1,3 @@
+hdbscan_cluster,n,n_leiden_subclusters,median_sev_low,median_sev_high,severity_gap,mannwhitney_p
+0,245,2,-0.074,0.865,0.939,3.338735929685108e-13
+2,336,3,-1.796,0.495,2.292,3.6557547031703095e-24
