@@ -162,6 +162,7 @@ def main():
         x=10,
         base_dir=PROJECT_ROOT,
         image_size=2.0,
+        run_name="hdbscan",
     )
 
 
