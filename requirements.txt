@@ -8,6 +8,10 @@ scipy~=1.18.0
 scikit-learn~=1.9.0
 scikit-image~=0.26.0
 hdbscan~=0.8.44
+# Required by src/clustering/leiden/fit.py. Left unpinned because the versions
+# actually used were never recorded; pin them once a working pair is installed.
+igraph
+leidenalg
 pillow~=12.2.0
 openslide-bin~=4.0.0.13
 openslide-python~=1.4.3

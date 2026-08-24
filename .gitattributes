@@ -1,0 +1,6 @@
+# Shell scripts and SLURM job files run on the Linux cluster and are often copied
+# there straight from a Windows working copy. With core.autocrlf=true they would
+# be checked out with CRLF, and bash fails on the trailing \r with errors that
+# point nowhere near the real cause. Force LF in the working copy too.
+*.sh    text eol=lf
+*.sbatch text eol=lf
