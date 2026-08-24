@@ -29,7 +29,8 @@ Full method and discussion: see the project report.
 src/
   data/            WSI preprocessing: tissue mask, Reinhard normalisation,
                    patch extraction, glomerulus crops and masks from the XML
-  segmentation/    SegNet-VGG19 encoder-decoder and its tf.data pipeline
+  segmentation/    SegNet encoder-decoder (VGG19 or ResNet50) and its tf.data
+                   pipeline, with the on-the-fly augmentation
   backbones/       frozen feature extractors (MobileNet, DenseNet, Xception,
                    NASNet, DINOv2/v3, KimiaNet) behind a common interface
   clustering/      UMAP + HDBSCAN and UMAP + Leiden, with 50-seed consensus
@@ -37,13 +38,17 @@ src/
   visualization/   UMAP plots and per-cluster HTML reports
 
 scripts/           command-line entry points (see Pipeline below)
+experiments/       SLURM job scripts for the HPC runs; legacy/ archives the
+                   historical run configs for provenance only
 notebooks/         backbone and clustering evaluation, with saved outputs
 results/           committed results (see Results below)
 data/              inputs and intermediates — not versioned
+models/            training checkpoints and run logs — not versioned
 ```
 
-`src/` is a plain package tree: the scripts add the project root to `sys.path`,
-so no installation step is required.
+`src/` is a plain package tree, so no installation step is required: each script
+prepends the directory it needs (the project root, or `src/`) to `sys.path`
+before importing.
 
 ---
 
@@ -101,9 +106,54 @@ Detection and segmentation are carried out by the same fully convolutional
 encoder-decoder: the network predicts a per-pixel glomerulus map, and the
 connected components of that map localise the individual glomeruli.
 
-`src/segmentation/` holds the SegNet-VGG19 architecture and the tf.data input
-pipeline. The training and evaluation scripts, the LOSO cross-validation and the
-SLURM jobs live on a separate branch and are being merged into `main`.
+`src/segmentation/` holds the architecture and the tf.data input pipeline.
+Training is two-phase: a frozen-encoder warm-up, then a full fine-tune.
+
+```bash
+python scripts/train_segmentation.py data/dataset \
+    --phase-1-epochs 10 --phase-1-lr 0.01 \
+    --phase-2-epochs 20 --phase-2-lr 0.001 \
+    --flip-horizontal --stain-jitter 0.05 \
+    --output-dir models/run
+```
+
+Writes `best_model.keras` (selected on validation mean IoU), the CSV training log
+and the history into `--output-dir`. Evaluation is inference-only and reports the
+per-class IoU over a split from a single accumulated confusion matrix; `--tta`
+averages the 8 D4 orientations.
+
+```bash
+python scripts/evaluate_segmentation.py models/run/best_model.keras data/dataset/test --tta
+```
+
+**Leave-one-slide-out cross-validation.** With nine annotated slides a single
+fixed split is not a reliable estimator — and the one-slide validation set
+repeatedly ranked models the opposite way from the test set — so the reported
+segmentation results use LOSO: each slide is held out in turn, the model is
+trained on the other eight for a fixed budget, and the final model is evaluated
+on the held-out slide. There is deliberately no validation set and no early
+stopping, since selecting an epoch would reintroduce the very problem LOSO
+exists to avoid.
+
+```bash
+python scripts/loso_cv.py data/dataset --stain-jitter 0.05 --tta \
+    --output-dir models/loso
+```
+
+Writes a per-slide breakdown and the mean ± std to `loso_results.json`.
+
+The encoder is VGG19 with ImageNet weights by default. `--encoder resnet50`
+instead uses a ResNet50 initialised from pathology-pretrained weights, which must
+first be converted from PyTorch offline (this needs torch and network access, so
+run it on a login node, not a GPU node):
+
+```bash
+bash scripts/setup_and_convert.sh barlowtwins   # or swav / mocov2 / imagenet
+python scripts/loso_cv.py data/dataset --encoder resnet50 \
+    --encoder-weights models/encoders/barlowtwins_resnet50.weights.h5
+```
+
+The SLURM jobs used on the cluster are in `experiments/`.
 
 ### 3. Glomerulus crops — for the unsupervised stage
 
@@ -161,12 +211,38 @@ Two notebooks, both committed with their outputs:
   the severity proxy, and the HDBSCAN-versus-Leiden comparison. Produces
   `results/clustering_evaluation/`.
 
+Two further notebooks are kept as working material rather than as results:
+`evaluate_embeddings.ipynb` (the embedding sanity checks, later folded into the
+backbone evaluation) and `colab_training.ipynb` (the Colab version of the
+segmentation training, used before the runs moved to the cluster). Both contain
+absolute paths from the machine they were run on.
+
 The clustering notebook auto-detects the most recent run of each method under
 `results/clustering/`, so run step 5 first.
+
+Three further scripts produce material for the report rather than for the
+pipeline: `make_preprocessing_figure.py` (slide to tissue mask to patches),
+`make_qualitative_figure.py` (patch, ground truth and prediction side by side,
+sampled across the IoU distribution rather than cherry-picked) and
+`check_rectangular_masks.py` (counts the annotations drawn as bounding boxes
+instead of outlines, via the mask fill ratio).
 
 ---
 
 ## Results
+
+### Segmentation
+
+Checkpoints and run logs are not versioned, so this stage has no committed
+artifacts under `results/` — rerunning `scripts/loso_cv.py` regenerates
+`loso_results.json` with the per-slide breakdown.
+
+The reference recipe is SegNet-VGG19 with an ImageNet encoder, two-phase
+training and on-the-fly D4 + horizontal flip + HED stain jitter augmentation,
+which reaches a glomerulus IoU of 0.702 ± 0.094 over the nine leave-one-slide-out
+folds. The spread across folds is as informative as the mean: it is what the
+single fixed split hides. The pathology-pretrained ResNet50 encoders were run as
+a comparison on the same protocol. Full per-run discussion is in the report.
 
 ### Backbone selection
 

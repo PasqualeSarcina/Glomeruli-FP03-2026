@@ -220,6 +220,16 @@ __marimo__/
 # Project local data and generated results
 /data/
 *.tar.gz
+raw_images
+data
+
+# HPC run artifacts (model checkpoints, datasets, job logs)
+models/
+dataset.zip
+slurm-*.out
+
+# Report deliverables (kept locally, not versioned)
+*.pdf
 
 # Claude
 .claude/

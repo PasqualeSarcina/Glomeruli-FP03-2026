@@ -16,8 +16,12 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.backbones.nasnet import NASNet
-from src.backbones.dinov2 import DinoV2ModelName, DinoV2
-from src.backbones.dinov3 import DinoV3ModelName, DinoV3
+try:  # ponytail: DINO needs keras_hub (absent on TF 2.21 env); CNN backbones still work
+    from src.backbones.dinov2 import DinoV2ModelName, DinoV2
+    from src.backbones.dinov3 import DinoV3ModelName, DinoV3
+except ImportError:
+    DinoV2 = DinoV3 = None
+    DinoV2ModelName = DinoV3ModelName = str
 from src.backbones.densenet169 import DenseNet169
 from src.backbones.mobilenet import MobileNet  
 from src.backbones.densenet201 import DenseNet201

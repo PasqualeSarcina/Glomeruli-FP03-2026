@@ -73,7 +73,7 @@ def extract_tissue_mask(
         connectivity=2
     )
 
-    clean_mask = clean.astype(np.bool)
+    clean_mask = clean.astype(bool)
 
     return clean_mask
 
