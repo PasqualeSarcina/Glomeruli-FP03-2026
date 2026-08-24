@@ -4,7 +4,7 @@ from PIL import Image
 from tensorflow import keras
 from tensorflow.keras.applications.xception import preprocess_input
 
-from backbones.backbone import Backbone
+from src.backbones.backbone import Backbone
 
 
 class Xception(Backbone):

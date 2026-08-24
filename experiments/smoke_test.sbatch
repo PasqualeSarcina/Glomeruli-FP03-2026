@@ -32,7 +32,13 @@ set -uo pipefail
 REPO=$HOME/Glomeruli-FP03-2026
 CONDA_ENV=glomeruli
 SLIDES_DIR=${SLIDES_DIR:-$HOME/slides}
-N_SLIDES=${N_SLIDES:-2}
+# 4 slides, not 2: the split is computed per SLIDE, so with 2 slides and the
+# default 0.7/0.15/0.15 both validation and test get zero slides, and training
+# then dies on an empty dataset. (LOSO survives that because it re-pools every
+# patch by slide and ignores the on-disk splits.) 4 slides with the explicit
+# 0.5/0.25 split below give a deterministic 2 train / 1 val / 1 test.
+N_SLIDES=${N_SLIDES:-4}
+SPLIT=${SPLIT:-"0.5 0.25"}
 BACKBONE=${BACKBONE:-mobilenet}      # the one selected in the report; also the fastest
 
 WORK=${SCRATCH_FLASH:-/tmp}/fp03-smoke-$SLURM_JOB_ID
@@ -105,7 +111,8 @@ DATASET="$WORK/repo/data/dataset"
 GLOM="$WORK/repo/data/glomeruli"
 
 run_stage "Stage 1 preprocessing" \
-    python scripts/preprocess_data.py "$SUBSET" --annotations-path "$SUBSET"
+    python scripts/preprocess_data.py "$SUBSET" --annotations-path "$SUBSET" \
+        --split-percentages $SPLIT
 
 for split in train validation test; do
     echo "  $split: $(find "$DATASET/$split/img" -name '*.png' 2>/dev/null | wc -l) patches"
