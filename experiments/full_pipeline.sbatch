@@ -108,8 +108,11 @@ conda activate "$CONDA_ENV"
 #     to a Stage-3 dependency problem.
 # Validate the resolution WITHOUT a queue slot first (login node, env active):
 #     pip install --dry-run hdbscan umap-learn scikit-learn pandas matplotlib tqdm "numpy~=2.4.6"
+#  3. igraph + leidenalg are imported by src/clustering/leiden/fit.py. They were
+#     absent from this list, which is why Leiden failed on every backbone in run
+#     1843596 while HDBSCAN succeeded.
 python -m pip install --quiet --upgrade-strategy only-if-needed \
-    hdbscan umap-learn scikit-learn pandas matplotlib tqdm "numpy~=2.4.6" \
+    hdbscan umap-learn scikit-learn pandas matplotlib tqdm igraph leidenalg "numpy~=2.4.6" \
     || echo "WARN: Stage-3 clustering deps did not resolve — TF/segmentation unaffected; embedding/clustering stages may be skipped."
 
 # TF needs its bundled CUDA libs on LD_LIBRARY_PATH (they aren't auto-discovered).
