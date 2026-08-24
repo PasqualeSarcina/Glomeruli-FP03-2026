@@ -1,0 +1,5 @@
+cluster,n,dominant_slide,dominant_slide_frac,slide_entropy,n_slides
+-1,35,RECHERCHE-004,0.343,0.718,6
+0,244,RECHERCHE-005,0.254,0.796,6
+1,339,RECHERCHE-010,0.248,0.914,9
+2,59,RECHERCHE-016,0.525,0.451,3

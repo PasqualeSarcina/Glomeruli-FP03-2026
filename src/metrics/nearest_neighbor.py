@@ -8,19 +8,14 @@ def _compute_knn_indices(
     X: np.ndarray,
     k_max: int,
 ) -> np.ndarray:
-    """
-    Calcola gli indici dei k-nearest-neighbor per ogni sample.
-
-    Ritorna:
-        knn_indices: array di shape (n_samples, k_max)
-    """
+    """Indices of the k_max nearest neighbours of every sample, shape (n_samples, k_max)."""
     X = np.asarray(X, dtype=np.float32)
 
     n_samples = X.shape[0]
 
     if k_max >= n_samples:
         raise ValueError(
-            f"k_max={k_max} non può essere >= n_samples={n_samples}."
+            f"k_max={k_max} must be smaller than n_samples={n_samples}."
         )
 
     X = normalize(X, norm="l2", axis=1)
@@ -39,13 +34,13 @@ def _compute_knn_indices(
     knn_indices = np.empty((n_samples, k_max), dtype=np.int64)
 
     for i in range(n_samples):
-        # rimuove il sample stesso dai suoi vicini
+        # drop the sample itself from its own neighbours
         valid = indices[i] != i
         row = indices[i][valid]
 
         if len(row) < k_max:
             raise RuntimeError(
-                f"Non ci sono abbastanza vicini validi per il sample {i}."
+                f"Not enough valid neighbours for sample {i}."
             )
 
         knn_indices[i] = row[:k_max]
@@ -54,11 +49,7 @@ def _compute_knn_indices(
 
 
 def mutual_nearest_neighbor_ratio(knn_indices: np.ndarray) -> float:
-    """
-    Calcola il Mutual Nearest Neighbor ratio.
-
-    knn_indices deve avere shape (n_samples, k).
-    """
+    """Mutual nearest neighbour ratio; knn_indices has shape (n_samples, k)."""
     n_samples, k = knn_indices.shape
 
     neighbor_sets = [set(knn_indices[i]) for i in range(n_samples)]
@@ -76,11 +67,7 @@ def mutual_nearest_neighbor_ratio(knn_indices: np.ndarray) -> float:
 
 
 def hubness_statistics(knn_indices: np.ndarray):
-    """
-    Calcola statistiche di hubness.
-
-    knn_indices deve avere shape (n_samples, k).
-    """
+    """Skewness of the k-occurrence distribution and its maximum (hubness)."""
     n_samples, k = knn_indices.shape
 
     hubness_counts = np.bincount(
@@ -106,29 +93,8 @@ def evaluate_embedding_backbone(
     #normalize_l2: bool = True,
 ) -> pd.DataFrame:
     """
-    Calcola le metriche nearest-neighbor principali per una singola backbone.
-
-    Parametri
-    ---------
-    X:
-        Embedding della backbone, shape (n_samples, n_features).
-
-    ks:
-        Valori di k per MNN@k.
-
-    hubness_k:
-        Valore di k usato per calcolare hubness skew e max hubness.
-
-    metric:
-        Distanza usata per i nearest-neighbor. Default: "cosine".
-
-    normalize_l2:
-        Se True, applica normalizzazione L2 agli embedding prima del calcolo.
-        Consigliato con cosine.
-
-    Ritorna
-    -------
-    DataFrame con una riga e metriche numeriche.
+    Nearest-neighbour metrics for one backbone: MNN@k for each k in ks, plus
+    hubness skew and max hubness at hubness_k. Returns a single-row DataFrame.
     """
     k_max = max(max(ks), hubness_k)
 

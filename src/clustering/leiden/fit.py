@@ -5,7 +5,7 @@ import umap
 from sklearn.neighbors import NearestNeighbors
 
 
-def _build_knn_graph(
+def build_knn_graph(
     X,
     k,
     metric,
@@ -114,7 +114,7 @@ def fit_umap_leiden(
         min_dist=0.02
     ).fit_transform(X)
 
-    graph = _build_knn_graph(
+    graph = build_knn_graph(
         X=umap_embeddings,
         k=k,
         metric=leiden_metric,

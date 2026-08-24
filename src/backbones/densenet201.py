@@ -36,33 +36,3 @@ class DenseNet201(Backbone):
         image_array = preprocess_input(image_array, data_format=None)
 
         return image_array
-
-    def _postprocess(
-            self,
-            embedding,
-            mask: Image.Image | None = None,
-    ):
-        feature_map = tf.convert_to_tensor(embedding, dtype=tf.float32)
-
-        if mask is None:
-            embedding = tf.reduce_mean(feature_map, axis=(1, 2))
-            return embedding.numpy().astype("float32")
-
-        _, feature_h, feature_w, _ = feature_map.shape
-
-        mask = mask.convert("L")
-        mask = mask.resize(
-            (feature_w, feature_h),
-            Image.Resampling.BILINEAR,
-        )
-
-        weights = np.asarray(mask, dtype=np.float32) / 255.0
-        weights = tf.convert_to_tensor(weights, dtype=tf.float32)
-        weights = tf.reshape(weights, shape=(1, feature_h, feature_w, 1))
-
-        numerator = tf.reduce_sum(feature_map * weights, axis=(1, 2))
-        denominator = tf.reduce_sum(weights, axis=(1, 2))
-
-        embedding = numerator / (denominator + 1e-8)
-
-        return embedding.numpy().astype("float32")

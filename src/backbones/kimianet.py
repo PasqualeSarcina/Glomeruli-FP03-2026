@@ -6,13 +6,16 @@ import numpy as np
 from tensorflow.keras.applications.densenet import preprocess_input
 import tensorflow as tf
 
+import os
+os.environ["CUDA_VISIBLE_DEVICES"] = ""
+
 from src.backbones.backbone import Backbone
 
 
 class Kimianet(Backbone):
     def __init__(
             self,
-            input_size= 224
+            input_size= 1000
     ):
         assert input_size > 32, "Input size should be greater than 32"
         backbone = tf.keras.applications.DenseNet121(
@@ -23,7 +26,7 @@ class Kimianet(Backbone):
         backbone.load_weights(Path(__file__).parent.parent.parent / "data" / "checkpoints" / "KimiaNetKerasWeights.h5")
         backbone.trainable = False
 
-        super().__init__(backbone, input_size, backbone.output_shape[-1])
+        super().__init__(backbone, input_size, 3*backbone.output_shape[-1])
 
     def _preprocess_image(self, image: Image.Image) -> np.ndarray:
         image = image.convert("RGB")

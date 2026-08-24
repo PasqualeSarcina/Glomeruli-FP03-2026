@@ -219,7 +219,6 @@ __marimo__/
 
 # Project local data and generated results
 /data/
-/results/
 *.tar.gz
 raw_images
 data

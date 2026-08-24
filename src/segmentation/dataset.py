@@ -19,7 +19,7 @@ class SegmentationDataset:
     """
     TF Dataset builder for SegNet training.
 
-    Expects the directory layout produced by scripts/preprocessing/preprocess_data.py:
+    Expects the directory layout produced by scripts/preprocess_data.py:
         root/
           img/   *.png   (400x400 RGB patches)
           mask/  *.png   (400x400 binary masks, 0=background 1=glomerulus)
@@ -74,7 +74,7 @@ class SegmentationDataset:
         """
         Build a dataset from explicit (image, mask) path lists instead of
         globbing a root/img + root/mask directory. Used by leave-one-slide-out
-        CV (scripts/training/loso_cv.py), where each fold's train/test set is an
+        CV (scripts/loso_cv.py), where each fold's train/test set is an
         arbitrary subset of patches pooled across the on-disk train/val/test
         folders — so there is no single directory to glob.
         """

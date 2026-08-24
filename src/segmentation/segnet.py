@@ -1,6 +1,6 @@
 # Makes the `str | None` style type hints below lazy (evaluated as strings),
 # so this module also imports under Python 3.9 — needed because the weight
-# conversion venv (scripts/encoders/setup_and_convert.sh) runs on the login
+# conversion venv (scripts/setup_and_convert.sh) runs on the login
 # node's system Python 3.9 and imports build_resnet50_v15_encoder from here.
 # Harmless on the 3.12 training env.
 from __future__ import annotations
@@ -126,7 +126,7 @@ def build_resnet50_v15_encoder(
     Lunit's SwAV pathology weights (trained on that exact architecture) can be
     transplanted with ~zero numerical drift. `keras.applications.ResNet50` is
     v1 (stride on the 1x1) and is therefore NOT weight-compatible — see
-    `_resnet_bottleneck` and `scripts/encoders/convert_swav_resnet50.py`.
+    `_resnet_bottleneck` and `scripts/convert_encoder_weights.py`.
 
     Single source of truth for the encoder architecture: both the training
     code (`build_segnet_resnet50`) and the weight-conversion script import
@@ -183,7 +183,7 @@ def build_segnet_resnet50(
     reconstructs back to 384x384 with no changes.
 
     encoder_weights_path: path to the converted pathology-pretrained
-    weights (see scripts/encoders/convert_swav_resnet50.py). If None, the
+    weights (see scripts/convert_encoder_weights.py). If None, the
     encoder is left randomly initialized (mostly useful for architecture
     sanity-checks, not real training).
     """

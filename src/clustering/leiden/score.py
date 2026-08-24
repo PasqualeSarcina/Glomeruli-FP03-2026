@@ -7,6 +7,9 @@ def compute_leiden_clustering_score(
     labels,
     bad_cluster_weight,
     cosine_weight,
+    noise_weight,
+    max_noise_fraction,
+    cluster_weight,
 ):
     """
     Compute a Leiden consensus clustering score.
@@ -30,6 +33,15 @@ def compute_leiden_clustering_score(
     cosine_weight : float
         Weight applied to intra-cluster cosine similarity.
 
+    noise_weight : float
+        Weight applied to the fraction of samples rejected by consensus.
+
+    max_noise_fraction : float
+        Reject solutions whose noise fraction exceeds this threshold.
+
+    cluster_weight : float
+        Weight applied to a logarithmic cluster-count penalty.
+
     Returns
     -------
     float
@@ -37,6 +49,12 @@ def compute_leiden_clustering_score(
     """
 
     labels = np.asarray(labels)
+
+    noise_fraction = float(np.mean(labels == -1))
+    n_clusters = len(set(labels) - {-1})
+
+    if noise_fraction > max_noise_fraction:
+        return -np.inf
 
     modularity_values = []
 
@@ -58,24 +76,25 @@ def compute_leiden_clustering_score(
         dtype=float,
     )
 
-    # I contributi dei cluster devono essere sommati:
-    # la loro somma corrisponde alla modularità globale.
-    global_modularity = np.sum(modularity_values)
+    # noise samples do not form a community, so only assigned clusters count
+    assigned_modularity = np.sum(modularity_values)
 
     negative_mask = modularity_values < 0
 
-    # Non si applicano nuovamente i pesi delle dimensioni:
-    # il contributo di modularità incorpora già il volume del cluster.
+    # no size weighting here: the modularity contribution already embeds cluster volume
     bad_cluster_penalty = (
         np.sum(np.abs(modularity_values[negative_mask]))
         if np.any(negative_mask)
         else 0.0
     )
+    cluster_count_penalty = cluster_weight * np.log(max(1, n_clusters))
 
     score = (
-        global_modularity
+        assigned_modularity
         - bad_cluster_weight * bad_cluster_penalty
         + cosine_weight * cosine_sim
+        - noise_weight * noise_fraction
+        - cluster_count_penalty
     )
 
     return float(score)

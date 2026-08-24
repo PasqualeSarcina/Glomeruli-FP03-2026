@@ -25,6 +25,7 @@ def save_clustering_results(
     base_dir: str | Path | None = None,
     image_size: float = 3.0,
     random_state: int | None = None,
+    run_name: str | None = None,
 ) -> None:
     """
     Save a report containing up to x images per cluster and the data supplied
@@ -33,13 +34,13 @@ def save_clustering_results(
     cluster; ``random_state`` can be set to make the selection reproducible.
 
     The function also creates:
-    - clustering results/<timestamp>/samples_per_cluster.png
-    - clustering results/<timestamp>/umap_clusters.png
-    - clustering results/<timestamp>/index.html
-    - clustering results/<timestamp>/manifest.csv
-    - clustering results/<timestamp>/cluster_metrics.csv
-    - clustering results/<timestamp>/cluster_<label>.html for every cluster
-    - clustering results/<timestamp>/noise.html when HDBSCAN noise is present.
+    - results/clustering/<timestamp>_<method>/samples_per_cluster.png
+    - results/clustering/<timestamp>_<method>/umap_clusters.png
+    - results/clustering/<timestamp>_<method>/index.html
+    - results/clustering/<timestamp>_<method>/manifest.csv
+    - results/clustering/<timestamp>_<method>/cluster_metrics.csv
+    - results/clustering/<timestamp>_<method>/cluster_<label>.html for every cluster
+    - results/clustering/<timestamp>_<method>/noise.html when HDBSCAN noise is present.
     """
 
     embeddings_array = np.asarray(embeddings)
@@ -75,7 +76,7 @@ def save_clustering_results(
     if not cluster_labels:
         raise ValueError("No clusters to display.")
 
-    results_dir = _create_results_dir()
+    results_dir = _create_results_dir(run_name)
     rng = np.random.default_rng(random_state)
 
     figure, axes = plt.subplots(
@@ -157,14 +158,15 @@ def save_clustering_results(
     plt.close(umap_figure)
 
 
-def _create_results_dir() -> Path:
-    results_root = _repository_root() / "clustering results"
+def _create_results_dir(run_name: str | None = None) -> Path:
+    results_root = _repository_root() / "results" / "clustering"
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    output_dir = results_root / timestamp
+    base_name = f"{timestamp}_{run_name}" if run_name else timestamp
+    output_dir = results_root / base_name
 
     suffix = 2
     while output_dir.exists():
-        output_dir = results_root / f"{timestamp}_{suffix}"
+        output_dir = results_root / f"{base_name}_{suffix}"
         suffix += 1
 
     output_dir.mkdir(parents=True, exist_ok=False)
@@ -572,7 +574,7 @@ def plot_nearest_neighbors_with_distances(
 
     if k >= n_samples:
         raise ValueError(
-            f"k={k} è troppo grande. Deve essere minore di n_samples={n_samples}."
+            f"k={k} is too large; it must be smaller than n_samples={n_samples}."
         )
 
     query_indices = list(query_indices)

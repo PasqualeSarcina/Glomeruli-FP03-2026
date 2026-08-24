@@ -50,11 +50,10 @@ class Backbone(ABC):
             mask: Image.Image,
     ):
         """
-        feature_map: tensore DenseNet con shape (1, H, W, C)
-        mask_image: maschera PIL del glomerulo
+        embedding: the output of the backbones' forward pass
+        mask: PIL binary mask of the glomerulus
 
-        ritorna:
-            embedding con shape (1, C)
+        returns: masked mean of the embedding, shape (1, hidden_dim)
         """
 
         feature_map = tf.convert_to_tensor(embedding, dtype=tf.float32)
@@ -62,18 +61,14 @@ class Backbone(ABC):
         _, feature_h, feature_w, _ = feature_map.shape
 
         mask = mask.convert("L")
-
         mask = mask.resize(
             (feature_w, feature_h),
             Image.Resampling.BILINEAR,
         )
 
         weights = np.asarray(mask, dtype=np.float32)
-
         weights = weights / 255.0
-
         weights = tf.convert_to_tensor(weights, dtype=tf.float32)
-
         weights = tf.reshape(weights, shape=(1, feature_h, feature_w, 1))
 
         weighted_feature_map = feature_map * weights
@@ -88,9 +83,9 @@ class Backbone(ABC):
             axis=(1, 2),
         )
 
-        embedding = numerator / (denominator + 1e-8)
+        weighted_embedding = numerator / (denominator + 1e-8)
 
-        return embedding.numpy().astype("float32")
+        return weighted_embedding.numpy().astype("float32")
 
     def __call__(
             self,
