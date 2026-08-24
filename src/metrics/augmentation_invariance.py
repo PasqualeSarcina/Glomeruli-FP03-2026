@@ -1,27 +1,12 @@
 """
-Robustezza dell'embedding di una backbone alle trasformazioni geometriche
-che non cambiano l'identita' biologica del glomerulo (rotazioni di 90/180/270
-gradi, flip orizzontale/verticale).
+Robustness of a backbone embedding to geometric transforms that do not change
+the biology of the glomerulus (90/180/270 rotations, horizontal/vertical flips).
+A crop from a WSI has no canonical orientation, so a backbone sensitive to it
+would assign clusters by cropping angle rather than by histological severity.
 
-Perche' serve
--------------
-Un glomerulo ritagliato da una WSI non ha un orientamento "corretto": e'
-tessuto tagliato, non un oggetto con un verso naturale. Lo stesso glomerulo
-ruotato o specchiato e' biologicamente lo stesso oggetto e dovrebbe finire
-vicino a se stesso nello spazio dell'embedding. Se una backbone e' sensibile
-all'orientamento, l'assegnazione a un cluster puo' dipendere dal verso con
-cui il glomerulo e' stato ritagliato invece che dalla sua reale gravita'
-istologica: questo introduce rumore artificiale nella classificazione finale.
-
-Differenza rispetto a backbone_invariance_eval.py originale
--------------------------------------------------------------
-La versione originale accetta solo l'immagine. Qui l'embed_fn ha la stessa
-firma di src.backbones.backbone.Backbone.__call__(image, mask): alcune
-backbone (es. DinoV2/DinoV3 in modalita' "patch" o "both") usano la maschera
-per pesare i patch token sulla sola regione del glomerulo, quindi la maschera
-deve essere ruotata/specchiata insieme all'immagine, altrimenti la metrica
-di invarianza sarebbe scorretta (penalizzerebbe la backbone per un
-disallineamento introdotto da noi, non per un suo limite reale).
+Unlike backbone_invariance_eval.py, embed_fn here takes (image, mask): masked
+backbones weight patch tokens on the glomerulus, so the mask must be transformed
+together with the image.
 """
 
 from pathlib import Path
@@ -57,7 +42,7 @@ def load_mask_image(path: str | Path) -> Image.Image:
 
 def apply_augmentation(image: Image.Image, augmentation_name: str) -> Image.Image:
     if augmentation_name not in AUGMENTATION_TO_PIL_TRANSPOSE:
-        raise ValueError(f"Augmentation non riconosciuta: {augmentation_name}")
+        raise ValueError(f"Unknown augmentation: {augmentation_name}")
     return image.transpose(AUGMENTATION_TO_PIL_TRANSPOSE[augmentation_name])
 
 
@@ -70,7 +55,7 @@ def embedding_to_1d_array(embedding) -> np.ndarray:
         return embedding[0]
 
     raise ValueError(
-        f"L'embedding deve avere shape (d,) oppure (1, d), ma ha shape {embedding.shape}."
+        f"Embedding must have shape (d,) or (1, d), got {embedding.shape}."
     )
 
 
@@ -85,15 +70,9 @@ def compute_augmentation_robustness_metrics(
     normalize_l2: bool = True,
 ) -> dict[str, pd.DataFrame]:
     """
-    Calcola le metriche di robustezza alle augmentation, sia aggregate su
-    tutte le trasformazioni sia per singola trasformazione.
-
-    Se mask_paths e' None, embed_fn viene chiamata con mask=None (va bene
-    per backbone in modalita' "cls", che non usano la maschera).
-
-    Ritorna un dizionario con due DataFrame:
-    - "overall": una riga, metriche aggregate su tutte le augmentation
-    - "by_augmentation": una riga per augmentation, stesse metriche
+    Augmentation-robustness metrics. Returns {"overall": one row aggregated over
+    all augmentations, "by_augmentation": one row per augmentation}.
+    With mask_paths=None, embed_fn is called with mask=None ("cls" backbones).
     """
 
     image_paths = list(map(Path, image_paths))
@@ -102,8 +81,8 @@ def compute_augmentation_robustness_metrics(
         mask_paths = list(map(Path, mask_paths))
         if len(mask_paths) != len(image_paths):
             raise ValueError(
-                f"image_paths ({len(image_paths)}) e mask_paths ({len(mask_paths)}) "
-                "devono avere la stessa lunghezza."
+                f"image_paths ({len(image_paths)}) and mask_paths ({len(mask_paths)}) "
+                "must have the same length."
             )
 
     if subset_size is not None and subset_size < len(image_paths):
@@ -117,15 +96,15 @@ def compute_augmentation_robustness_metrics(
 
     n_images = len(image_paths)
     if n_images < 2:
-        raise ValueError("Servono almeno 2 immagini.")
+        raise ValueError("At least 2 images are required.")
     if max(retrieval_ks) > n_images:
         raise ValueError(
-            f"Il massimo k richiesto e' {max(retrieval_ks)}, ma ci sono solo {n_images} immagini."
+            f"Largest requested k is {max(retrieval_ks)}, but only {n_images} images are available."
         )
 
     original_embeddings = []
-    # Per ogni augmentation teniamo separati gli embedding, per poter
-    # calcolare sia le metriche aggregate sia quelle per-augmentation.
+    # kept per augmentation so both aggregated and per-augmentation metrics
+    # can be computed
     augmented_embeddings_by_aug: dict[str, list[np.ndarray]] = {
         aug: [] for aug in augmentations
     }

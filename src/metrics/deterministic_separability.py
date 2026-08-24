@@ -1,30 +1,10 @@
 """
-Metriche di separabilità DETERMINISTICHE per confrontare backbone diverse.
+Deterministic separability probes for comparing backbones.
 
-Motivazione
------------
-UMAP e HDBSCAN hanno componenti stocastiche (inizializzazioni casuali,
-sampling interno). Se si usano per confrontare backbone diverse, una parte
-della varianza osservata tra backbone è in realta' dovuta al seed, non alla
-qualita' dell'embedding.
-
-Il clustering gerarchico agglomerativo con linkage "ward" e' invece
-completamente deterministico (nessun seed, nessuna inizializzazione
-casuale): a parita' di dati, il risultato e' sempre lo stesso. Per questo
-e' usato qui come "sonda" di separabilita', non come pipeline finale di
-clustering del progetto.
-
-Le due famiglie di metriche in questo modulo:
-
-1. effective_dimensionality(...)
-   Quanto l'embedding e' concentrato su poche direzioni principali
-   (PCA). Un embedding troppo "piatto" (varianza spalmata su moltissime
-   componenti) tende a essere meno separabile in pratica.
-
-2. ward_clustering_curve(...) / summarize_ward_curve(...)
-   Silhouette / Davies-Bouldin / Calinski-Harabasz calcolati con Ward
-   su un range di k. Poiche' Ward e' deterministico, la curva ottenuta
-   e' riproducibile al 100% e permette un confronto equo tra backbone.
+UMAP and HDBSCAN-on-UMAP are stochastic, so part of the variance observed
+between backbones would come from the seed rather than from embedding quality.
+Ward linkage and PCA are seed-free, so the comparison here is reproducible.
+These are probes, not the project's final clustering pipeline.
 """
 
 
@@ -46,20 +26,10 @@ def effective_dimensionality(
     random_state: int = 42,
 ) -> dict:
     """
-    Calcola la dimensionalita' effettiva di un embedding tramite PCA.
-
-    Ritorna, per ciascuna soglia di varianza spiegata richiesta, il numero
-    di componenti necessarie, sia in valore assoluto che come frazione
-    della dimensionalita' originale (piu' basso = embedding piu'
-    concentrato/strutturato).
-
-    Include anche il "participation ratio" (PR), una misura continua
-    della dimensionalita' effettiva basata sugli autovalori:
-
-        PR = (sum(lambda_i))^2 / sum(lambda_i^2)
-
-    PR vale 1 se tutta la varianza e' su una sola componente, e vale
-    n_features se la varianza e' distribuita uniformemente su tutte.
+    Effective dimensionality via PCA: components needed for each variance
+    threshold, in absolute terms and as a fraction of the original dimension.
+    Also returns the participation ratio PR = (sum L)^2 / sum(L^2), which is 1
+    when all variance sits on one component and n_features when it is uniform.
     """
 
     X = np.asarray(X, dtype=np.float64)
@@ -104,17 +74,9 @@ def ward_clustering_curve(
     random_state: int = 42,
 ) -> pd.DataFrame:
     """
-    Calcola una curva di metriche interne di clustering usando Ward
-    (deterministico) per ciascun valore di k in k_values.
-
-    Se il dataset e' molto grande, le metriche interne (silhouette in
-    particolare, che e' O(n^2)) vengono calcolate su un sottoinsieme
-    campionato in modo riproducibile; il clustering stesso viene invece
-    fatto su tutti i punti disponibili.
-
-    Ritorna un DataFrame con una riga per k, colonne:
-    k, silhouette, davies_bouldin, calinski_harabasz,
-    min_cluster_size, max_cluster_size.
+    Internal clustering metrics with Ward linkage for each k in k_values.
+    Clustering runs on all points; the O(n^2) metrics may be evaluated on a
+    reproducible subsample. Returns one row per k.
     """
 
     X = np.asarray(X, dtype=np.float64)
@@ -180,15 +142,9 @@ def ward_clustering_curve(
 
 def summarize_ward_curve(curve_df: pd.DataFrame) -> dict:
     """
-    Riassume la curva Ward in poche metriche scalari, comode per
-    confrontare backbone diverse in una singola tabella:
-
-    - best_silhouette / best_k_silhouette: picco della curva Silhouette
-      e k al quale si ottiene (piu' alto e' meglio: -1..1).
-    - best_calinski_harabasz / best_k_calinski_harabasz
-    - best_davies_bouldin / best_k_davies_bouldin (piu' basso e' meglio)
-    - mean_silhouette: media della curva, per non premiare solo un k
-      "fortunato".
+    Collapse the Ward curve into scalars: the peak of each metric and the k at
+    which it occurs, plus the mean silhouette so that a single lucky k does not
+    dominate the comparison. Davies-Bouldin is lower-is-better.
     """
 
     if curve_df.empty:
@@ -242,22 +198,11 @@ def pca_reduce(
     random_state: int = 42,
 ) -> tuple[np.ndarray, dict]:
     """
-    Riduce X tramite PCA mantenendo variance_target della varianza.
+    PCA reduction keeping variance_target of the variance.
 
-    PCA e' deterministico (a parita' di dati e seed dell'SVD randomizzato
-    da', nella pratica, lo stesso risultato), quindi il confronto tra
-    backbone resta riproducibile, a differenza di UMAP.
-
-    Questo serve a valutare la separabilita' nello STESSO tipo di spazio
-    ridotto che verra' usato nella pipeline vera (dove il clustering non
-    avviene mai sullo spazio grezzo ad alta dimensione, ma dopo riduzione
-    dimensionale). In spazi con migliaia di dimensioni le distanze
-    euclidee si appiattiscono (maledizione della dimensionalita') e la
-    silhouette risulta artificialmente bassa: valutare dopo PCA da' un
-    quadro piu' realistico.
-
-    Ritorna (X_ridotto, info) dove info contiene il numero di componenti
-    effettivamente usate e la varianza spiegata cumulata.
+    Separability is measured in the same kind of reduced space the real
+    pipeline uses: across thousands of dimensions euclidean distances flatten
+    out and the silhouette comes out artificially low. Returns (X_reduced, info).
     """
 
     X = np.asarray(X, dtype=np.float64)
@@ -272,7 +217,7 @@ def pca_reduce(
 
     n_used = int(pca.n_components_)
     if max_components is not None and n_used > max_components:
-        # Ricalcolo troncando al numero massimo di componenti richiesto.
+        # recompute, truncated to the largest requested number of components
         pca = PCA(n_components=max_components, svd_solver="full", random_state=random_state)
         X_reduced = pca.fit_transform(X)
         n_used = int(pca.n_components_)
@@ -293,31 +238,15 @@ def hdbscan_clustering_metrics(
     random_state: int = 42,
 ) -> pd.DataFrame:
     """
-    Sonda di clustering basata su densita' con HDBSCAN (deterministico).
+    Density-based probe with HDBSCAN over a range of min_cluster_size.
 
-    A differenza di Ward, HDBSCAN:
-      - non richiede di fissare il numero di cluster: lo scopre da solo;
-      - puo' marcare punti come rumore (label -1), utile con dataset
-        sbilanciati dove alcuni glomeruli rari non formano un cluster netto;
-      - trova cluster di forma e densita' arbitraria, non solo sferici.
+    Unlike Ward it finds the number of clusters on its own, allows noise and
+    handles non-spherical shapes. sklearn's HDBSCAN is seed-free and runs here
+    directly on the PCA space, so the probe stays reproducible.
 
-    HDBSCAN (l'implementazione di scikit-learn, sklearn.cluster.HDBSCAN) e'
-    DETERMINISTICO: a parita' di dati e parametri restituisce sempre lo
-    stesso risultato, nessun seed. La stocasticita' della pipeline reale
-    viene da UMAP, non da HDBSCAN; qui HDBSCAN gira direttamente sullo
-    spazio PCA (deterministico), quindi tutto resta riproducibile.
-
-    Viene provato un range di min_cluster_size (analogo al range di k di
-    Ward) e per ciascuno si calcolano:
-      - n_clusters: numero di cluster trovati (escluso il rumore)
-      - noise_fraction: frazione di punti marcati come rumore
-      - silhouette_no_noise: silhouette calcolata SOLO sui punti
-        clusterizzati (il rumore falserebbe la metrica). NaN se restano
-        meno di 2 cluster dopo aver escluso il rumore.
-      - largest_cluster_fraction: frazione di punti nel cluster piu' grande
-        (per accorgersi se collassa tutto in un unico gruppone)
-
-    Ritorna un DataFrame con una riga per min_cluster_size.
+    One row per min_cluster_size. The silhouette is computed on clustered points
+    only (NaN below 2 clusters), and the fraction of points in the largest
+    cluster catches a collapse into a single group.
     """
 
     from sklearn.cluster import HDBSCAN
@@ -355,7 +284,7 @@ def hdbscan_clustering_metrics(
         else:
             row["largest_cluster_fraction"] = np.nan
 
-        # Silhouette solo sui punti clusterizzati, e solo se restano >= 2 cluster.
+        # silhouette on clustered points only, and only with >= 2 clusters
         if n_clusters >= 2:
             try:
                 row["silhouette_no_noise"] = float(
@@ -363,9 +292,7 @@ def hdbscan_clustering_metrics(
                 )
             except Exception:
                 row["silhouette_no_noise"] = np.nan
-            # DBCV: metrica di validazione specifica per cluster di densita'
-            # (Moulavi et al. 2014). Calcolata sull'intero set con le label
-            # HDBSCAN (il rumore e' escluso internamente dalla funzione).
+            # DBCV on the full set; noise is excluded inside the function
             try:
                 row["dbcv"] = density_based_clustering_validation(X, labels, noise_label=-1)
             except Exception:
@@ -381,17 +308,9 @@ def hdbscan_clustering_metrics(
 
 def summarize_hdbscan_metrics(hdbscan_df: pd.DataFrame) -> dict:
     """
-    Riassume la tabella HDBSCAN in poche metriche scalari, scegliendo la
-    configurazione "migliore" come quella con la silhouette_no_noise piu'
-    alta tra quelle che trovano almeno 2 cluster e non collassano tutto
-    nel rumore.
-
-    Ritorna:
-      - hdbscan_best_silhouette / hdbscan_best_min_cluster_size
-      - hdbscan_best_n_clusters
-      - hdbscan_best_noise_fraction
-      - hdbscan_min_noise_fraction: il minimo rumore osservato (per capire
-        se HDBSCAN riesce a spiegare la maggior parte dei punti)
+    Collapse the HDBSCAN table into scalars. The best configuration is the one
+    with the highest silhouette among those finding at least 2 clusters without
+    collapsing into noise; the minimum observed noise fraction is also reported.
     """
 
     if hdbscan_df.empty:
@@ -421,8 +340,7 @@ def summarize_hdbscan_metrics(hdbscan_df: pd.DataFrame) -> dict:
         result["hdbscan_best_n_clusters"] = None
         result["hdbscan_best_noise_fraction"] = np.nan
 
-    # Miglior DBCV (metrica di densita' dedicata, Moulavi 2014): riportato
-    # separatamente perche' e' l'indice piu' appropriato per HDBSCAN.
+    # DBCV reported separately: it is the most appropriate index for HDBSCAN
     if "dbcv" in hdbscan_df.columns and hdbscan_df["dbcv"].notna().any():
         idx_dbcv = hdbscan_df["dbcv"].idxmax()
         result["hdbscan_best_dbcv"] = float(hdbscan_df.loc[idx_dbcv, "dbcv"])
@@ -444,37 +362,15 @@ def density_based_clustering_validation(
     noise_label: int = -1,
 ) -> float:
     """
-    DBCV — Density-Based Clustering Validation (Moulavi et al., 2014).
+    DBCV, Density-Based Clustering Validation (Moulavi et al., SDM 2014).
 
-    Metrica interna di validazione pensata specificamente per clustering
-    basato su densita' (come HDBSCAN), a differenza della silhouette che
-    assume cluster convessi/sferici. Va da -1 a +1: valori piu' alti
-    indicano cluster piu' densi internamente e meglio separati.
+    Validation index built for density-based clustering: unlike the silhouette
+    it handles arbitrary cluster shapes and accounts for internal density.
+    Ranges from -1 to +1. Points labelled noise_label are excluded.
 
-    A differenza della silhouette, DBCV:
-      - gestisce cluster di forma arbitraria (non solo sferici);
-      - tiene conto della densita' interna dei cluster, non solo delle
-        distanze medie.
-
-    Riferimento:
-      Moulavi, Jaskowiak, Campello, Zimek, Sander (2014),
-      "Density-Based Clustering Validation", SDM 2014.
-
-    Parametri
-    ---------
-    X: array (n_samples, n_features)
-    labels: etichette di cluster; i punti con label == noise_label sono
-            esclusi dal calcolo (coerentemente con la definizione DBCV,
-            che valuta solo i punti effettivamente clusterizzati).
-
-    Ritorna il DBCV globale (media pesata sui cluster). NaN se ci sono
-    meno di 2 cluster validi.
-
-    Nota implementativa: questa e' un'implementazione diretta della
-    definizione del paper (mutual reachability distance -> MST per
-    cluster -> density sparseness/separation). E' O(sum_i n_i^2) sui
-    punti di ciascun cluster, adeguata a dataset di dimensioni moderate
-    come quello dei glomeruli.
+    Direct implementation of the paper (mutual reachability -> per-cluster MST
+    -> density sparseness/separation), O(sum_i n_i^2). Returns the weighted mean
+    over clusters, or NaN below 2 valid clusters.
     """
 
     from scipy.spatial.distance import cdist
@@ -496,8 +392,7 @@ def density_based_clustering_validation(
     n_total = X_core.shape[0]
     n_features = X_core.shape[1]
 
-    # --- core distance (apts) di ogni punto, cluster per cluster ----------
-    # apts_i = ( mean_j ( 1 / d(i,j)^dim ) ) ^ (-1/dim), j != i nello stesso cluster
+    # all-points-core-distance: apts_i = (mean_j 1/d(i,j)^dim)^(-1/dim), j != i
     all_core_dist = {}
     intra_index = {}
     for lab in unique_labels:
@@ -510,16 +405,8 @@ def density_based_clustering_validation(
         D = cdist(pts, pts)
         np.fill_diagonal(D, np.inf)
 
-        # Core distance (all-points-core-distance del paper DBCV). Due
-        # accorgimenti numerici:
-        #  1) se due punti coincidono (D=0), D**(-n_features) darebbe inf:
-        #     lo escludiamo trattandolo come contributo nullo (riga
-        #     inv[~isfinite]=0), come gia' fatto.
-        #  2) se la somma degli inversi e' 0 (punto isolatissimo) oppure il
-        #     punto ha dei duplicati esatti, l'elevamento a -1/n_features
-        #     puo' dividere per zero. Proteggiamo la base con un epsilon e
-        #     forziamo core=0 per i punti con duplicati esatti (densita'
-        #     localmente infinita => core distance nulla).
+        # two numerical guards: coincident points (D=0) would give inf and are
+        # dropped, and an all-zero sum of inverses would divide by zero
         with np.errstate(divide="ignore", invalid="ignore"):
             inv = D ** (-n_features)
         has_exact_duplicate = np.any(~np.isfinite(inv), axis=1)
@@ -529,13 +416,11 @@ def density_based_clustering_validation(
         mean_inv = inv_sum / (n_i - 1)
 
         core = np.zeros(n_i, dtype=np.float64)
-        # Punti con almeno un duplicato esatto: densita' infinita -> core = 0.
-        # Punti "normali" (mean_inv > 0): formula standard.
+        # exact duplicates mean infinite local density -> core = 0
         valid = (mean_inv > 0) & (~has_exact_duplicate)
         with np.errstate(divide="ignore", invalid="ignore"):
             core[valid] = mean_inv[valid] ** (-1.0 / n_features)
-        # Punti isolati (mean_inv == 0, nessun vicino utile): core distance
-        # molto grande -> usiamo la massima distanza finita nel cluster.
+        # isolated points fall back to the largest finite distance in the cluster
         isolated = (mean_inv == 0) & (~has_exact_duplicate)
         if np.any(isolated):
             finite_D = D.copy()
@@ -548,7 +433,7 @@ def density_based_clustering_validation(
     def mutual_reachability(i, j, dij):
         return max(all_core_dist.get(i, 0.0), all_core_dist.get(j, 0.0), dij)
 
-    # --- density sparseness interna (DSC) via MST del grafo mutual-reach --
+    # internal density sparseness (DSC) via the MST of the mutual-reach graph
     dsc = {}
     for lab in unique_labels:
         idx = intra_index[lab]
@@ -565,10 +450,10 @@ def density_based_clustering_validation(
                 M[a, b] = mr
                 M[b, a] = mr
         mst = minimum_spanning_tree(M).toarray()
-        # density sparseness = max edge dell'MST (edge interno piu' "largo")
+        # density sparseness = widest edge of the MST
         dsc[lab] = float(mst.max()) if mst.size else 0.0
 
-    # --- density separation tra cluster (DSPC) ----------------------------
+    # density separation between clusters (DSPC)
     def cluster_separation(lab_a, lab_b):
         ia, ib = intra_index[lab_a], intra_index[lab_b]
         D = cdist(X_core[ia], X_core[ib])
@@ -580,7 +465,7 @@ def density_based_clustering_validation(
                     best = mr
         return best
 
-    # --- validity index per cluster e media pesata ------------------------
+    # per-cluster validity index and weighted mean
     total_score = 0.0
     for lab in unique_labels:
         min_sep = np.inf

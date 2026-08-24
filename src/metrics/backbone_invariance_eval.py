@@ -62,13 +62,8 @@ def compute_augmentation_robustness_metrics(
     normalize_l2: bool = True,
 ) -> pd.DataFrame:
     """
-    Calcola solo le metriche principali di robustezza alle augmentations.
-
-    Metriche restituite:
-    - self-retrieval@5
-    - self-retrieval@10
-    - self-retrieval@20
-    - median intra/nearest-inter ratio
+    Core augmentation-robustness metrics only: self-retrieval@5/@10/@20 and the
+    median intra/nearest-inter ratio.
     """
 
     image_paths = list(map(Path, image_paths))
@@ -76,7 +71,7 @@ def compute_augmentation_robustness_metrics(
     if subset_size is not None:
         if subset_size > len(image_paths):
             raise ValueError(
-                f"subset_size={subset_size} è maggiore del numero di immagini: "
+                f"subset_size={subset_size} exceeds the number of images: "
                 f"{len(image_paths)}."
             )
 
@@ -91,12 +86,12 @@ def compute_augmentation_robustness_metrics(
     n_images = len(image_paths)
 
     if n_images < 2:
-        raise ValueError("Servono almeno 2 immagini.")
+        raise ValueError("At least 2 images are required.")
 
     if max(retrieval_ks) > n_images:
         raise ValueError(
-            f"Il massimo k richiesto è {max(retrieval_ks)}, "
-            f"ma ci sono solo {n_images} immagini."
+            f"Largest requested k is {max(retrieval_ks)}, "
+            f"but only {n_images} images are available."
         )
 
     original_embeddings = []

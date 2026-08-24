@@ -1,37 +1,8 @@
 """
-Descrittori morfologici proxy della gravita' (glomerulosclerosi/necrotizzazione)
-estratti dai crop dei glomeruli, usando la maschera per limitare le misure
-alla sola regione del glomerulo.
-
-Perche' servono
----------------
-Non esistono etichette di gravita' annotate da un patologo. Per valutare se
-una backbone dispone i glomeruli lungo una GRADAZIONE CONTINUA di gravita'
-(invece che in cluster discreti) serve un riferimento morfologico oggettivo
-e riproducibile da usare come proxy della gravita'.
-
-I descrittori scelti sono marcatori morfologici noti della glomerulosclerosi:
-
-  - eosin_intensity: intensita' del canale "rosa/eosina". La sclerosi
-    deposita matrice extracellulare/collagene, che si colora di eosina;
-    piu' alto -> tendenzialmente piu' sclerotico.
-  - hematoxylin_intensity: intensita' del canale "blu-viola/ematossilina"
-    (nuclei cellulari). La sclerosi sostituisce le cellule con matrice,
-    quindi tende a calare; incluso come segnale complementare.
-  - texture_homogeneity / texture_contrast: misure GLCM. Un glomerulo sano
-    ha struttura ricca (capillari, nuclei -> texture complessa, contrasto
-    alto); uno sclerotico diventa piu' omogeneo/liscio. La perdita di
-    dettaglio strutturale e' un marcatore forte.
-  - area_fraction: frazione di pixel del glomerulo nella patch (proxy
-    grezzo di dimensione/atrofia).
-
-Nota metodologica
------------------
-Questo NON e' la vera gravita' clinica: e' un proxy morfologico. Serve solo
-come riferimento comune per confrontare le backbone tra loro ("quale dispone
-i glomeruli in modo piu' coerente con la morfologia?"), non come ground truth
-diagnostico. Va dichiarato esplicitamente nel report.
+Morphological descriptors used as a proxy for glomerulosclerosis severity.
+Not a clinical ground truth: only a reproducible reference to compare backbones.
 """
+
 
 from __future__ import annotations
 
@@ -58,7 +29,7 @@ def _load_rgb_and_mask(
     else:
         mask = np.ones((target_size, target_size), dtype=bool)
 
-    if mask.sum() < 10:  # maschera vuota/degenere -> usa tutta la patch
+    if mask.sum() < 10:  # degenerate mask -> fall back to the whole patch
         mask = np.ones_like(mask, dtype=bool)
 
     return rgb, mask
@@ -69,19 +40,11 @@ def extract_morphology_descriptor(
     mask_path: str | Path | None = None,
     target_size: int = 224,
 ) -> dict:
-    """
-    Estrae i descrittori morfologici da un singolo crop di glomerulo,
-    misurati solo sui pixel dentro la maschera.
-
-    Ritorna un dizionario di feature scalari.
-    """
+    """Extract the scalar descriptors of a single crop, measured inside the mask."""
 
     rgb, mask = _load_rgb_and_mask(Path(image_path), Path(mask_path) if mask_path else None, target_size)
 
-    # --- Deconvoluzione dei coloranti H&E (Hematoxylin-Eosin-DAB) ----------
-    # rgb2hed separa i canali di colorazione: 0 = ematossilina (nuclei, blu),
-    # 1 = eosina (matrice/citoplasma, rosa). E' molto piu' robusto che usare
-    # i canali RGB grezzi, perche' isola i coloranti istologici reali.
+    # rgb2hed channels: 0 = hematoxylin (nuclei), 1 = eosin (matrix/cytoplasm).
     hed = rgb2hed(rgb)
     hematoxylin = hed[..., 0]
     eosin = hed[..., 1]
@@ -99,7 +62,6 @@ def extract_morphology_descriptor(
         "area_fraction": float(mask_pixels.sum() / mask_pixels.size),
     }
 
-    # --- Texture (GLCM) sul grigio, dentro la bounding box della maschera --
     gray = (0.299 * rgb[..., 0] + 0.587 * rgb[..., 1] + 0.114 * rgb[..., 2])
     gray_u8 = (gray * 255).astype(np.uint8)
 
@@ -110,7 +72,7 @@ def extract_morphology_descriptor(
     else:
         patch = gray_u8
 
-    # riduco i livelli per una GLCM stabile
+    # fewer grey levels keep the GLCM stable
     levels = 32
     patch_q = (patch.astype(np.float64) / 256 * levels).astype(np.uint8)
     patch_q = np.clip(patch_q, 0, levels - 1)
@@ -141,15 +103,12 @@ def build_morphology_matrix(
     target_size: int = 224,
 ) -> tuple[np.ndarray, list[str]]:
     """
-    Estrae i descrittori morfologici per un elenco di crop e li impila in
-    una matrice (n_samples, n_descriptors).
-
-    Ritorna (matrice, nomi_descrittori). Le righe sono nello stesso ordine
-    di image_paths (fondamentale per allinearle agli embedding).
+    Stack the descriptors of every crop into an (n_samples, n_descriptors) matrix.
+    Rows follow the order of image_paths, so they align with the embeddings.
     """
 
     if mask_paths is not None and len(mask_paths) != len(image_paths):
-        raise ValueError("image_paths e mask_paths devono avere la stessa lunghezza.")
+        raise ValueError("image_paths and mask_paths must have the same length.")
 
     rows = []
     feature_names: list[str] | None = None
@@ -170,16 +129,9 @@ def morphology_severity_axis(
     random_state: int = 42,
 ) -> np.ndarray:
     """
-    Riduce i descrittori morfologici a un singolo asse continuo di "gravita'
-    morfologica" tramite la prima componente principale (dopo
-    standardizzazione).
-
-    L'assunzione e' che la direzione di massima variazione morfologica
-    corrisponda grosso modo all'asse sano <-> sclerotico. Non e' garantito
-    che il segno sia "verso la gravita'", ma per le metriche di gradazione
-    (che usano correlazioni e distanze) il segno e' irrilevante.
-
-    Ritorna un vettore (n_samples,) con il punteggio morfologico continuo.
+    Reduce the descriptors to a single continuous severity axis (PC1 after
+    standardisation). The sign is not guaranteed to point towards severity,
+    but the gradation metrics use correlations and distances, so it does not matter.
     """
 
     from sklearn.preprocessing import StandardScaler
@@ -187,7 +139,7 @@ def morphology_severity_axis(
 
     X = np.asarray(morphology_matrix, dtype=np.float64)
 
-    # gestisco eventuali colonne con NaN sostituendo con la mediana
+    # replace non-finite values with the column median
     for j in range(X.shape[1]):
         col = X[:, j]
         if np.any(~np.isfinite(col)):

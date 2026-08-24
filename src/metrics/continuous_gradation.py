@@ -1,36 +1,8 @@
 """
-Metriche di GRADAZIONE CONTINUA per valutare quanto gli embedding di una
-backbone catturano una variabile che varia con continuita' (la gravita'
-morfologica dei glomeruli), invece di formare cluster discreti.
-
-Motivazione
------------
-Le metriche di clustering (silhouette, DBCV) premiano la separazione in
-gruppi netti. Ma se la necrotizzazione e' un continuum (lieve -> moderato
--> grave), quello che serve non e' "quanto separa in cluster" ma "quanto
-dispone i glomeruli lungo un asse graduale coerente con la morfologia".
-
-Queste metriche usano un proxy morfologico continuo (vedi
-morphology_descriptors.py) come riferimento e misurano quanto la geometria
-dello spazio degli embedding e' allineata a quel gradiente:
-
-1. distance_morphology_correlation
-   Correlazione di Spearman tra le distanze nello spazio embedding e le
-   differenze nel punteggio morfologico. Alta = coppie di glomeruli
-   morfologicamente diverse sono anche lontane nell'embedding (l'embedding
-   rispetta la gradazione).
-
-2. morphology_neighborhood_consistency
-   Per ogni glomerulo, i suoi k vicini nell'embedding sono anche vicini nel
-   punteggio morfologico? Misura se la struttura LOCALE preserva la
-   gradazione.
-
-3. morphology_gradient_smoothness (indice di Moran)
-   Autocorrelazione spaziale del punteggio morfologico sul grafo dei vicini
-   nell'embedding: i valori morfologici variano in modo liscio e
-   progressivo lungo lo spazio (gradiente continuo) o a salti/casuale?
-
-Tutte e tre sono deterministiche (nessuna componente stocastica).
+Continuous-gradation metrics: how well an embedding lays glomeruli along a
+smooth severity axis, rather than splitting them into discrete clusters.
+All three metrics are deterministic and use the morphological severity proxy
+from morphology_descriptors.py as reference.
 """
 
 from __future__ import annotations
@@ -48,12 +20,9 @@ def distance_morphology_correlation(
     random_state: int = 42,
 ) -> float:
     """
-    Correlazione di Spearman tra distanze nello spazio embedding e
-    differenze assolute nel punteggio morfologico, su un campione di coppie.
-
-    Valori piu' alti (verso 1) = la distanza nell'embedding cresce in modo
-    monotono con la differenza morfologica: l'embedding riflette la
-    gradazione continua della gravita'.
+    Spearman correlation between embedding distances and absolute differences
+    in morphology score, over a sample of pairs. Towards 1 = the embedding
+    reflects the continuous severity gradient.
     """
 
     embeddings = np.asarray(embeddings, dtype=np.float64)
@@ -67,7 +36,7 @@ def distance_morphology_correlation(
         emb_dist = pdist(embeddings, metric="euclidean")
         morph_diff = pdist(morphology_score.reshape(-1, 1), metric="cityblock")
     else:
-        # campiono coppie casuali (i, j), i < j
+        # sample random pairs instead of all of them
         i_idx = rng.integers(0, n, size=max_pairs)
         j_idx = rng.integers(0, n, size=max_pairs)
         valid = i_idx != j_idx
@@ -85,16 +54,9 @@ def morphology_neighborhood_consistency(
     k: int = 15,
 ) -> float:
     """
-    Per ogni punto, misura quanto i k vicini nello spazio embedding sono
-    simili nel punteggio morfologico, rispetto a quanto sarebbe atteso a
-    caso.
-
-    Implementazione: per ogni punto calcola la deviazione media assoluta del
-    punteggio morfologico dei suoi k vicini; la normalizza rispetto alla
-    deviazione media assoluta globale. Ritorna 1 - (locale/globale):
-      ~1  -> i vicini nell'embedding hanno morfologia molto simile (ottimo)
-      ~0  -> i vicini non sono piu' simili di due punti a caso
-      <0  -> i vicini sono addirittura piu' diversi della media (pessimo)
+    1 - (local / global) mean absolute deviation of the morphology score over
+    the k nearest neighbours. ~1 = neighbours share a very similar morphology,
+    ~0 = no better than random pairs, <0 = neighbours are more different than average.
     """
 
     embeddings = np.asarray(embeddings, dtype=np.float64)
@@ -104,7 +66,7 @@ def morphology_neighborhood_consistency(
     k = min(k, n - 1)
     nn = NearestNeighbors(n_neighbors=k + 1).fit(embeddings)
     _, indices = nn.kneighbors(embeddings)
-    indices = indices[:, 1:]  # rimuovo il punto stesso
+    indices = indices[:, 1:]  # drop the point itself
 
     global_mad = float(np.mean(np.abs(morphology_score - np.mean(morphology_score))))
     if global_mad == 0:
@@ -125,15 +87,8 @@ def morphology_gradient_smoothness(
     k: int = 15,
 ) -> float:
     """
-    Indice di Moran (autocorrelazione spaziale) del punteggio morfologico
-    sul grafo dei k-nearest-neighbor nello spazio embedding.
-
-    Misura se il punteggio morfologico varia in modo liscio lungo lo spazio
-    (punti vicini hanno valori simili -> gradiente continuo) oppure in modo
-    casuale.
-      ~1  -> gradiente molto liscio (forte struttura continua)
-      ~0  -> nessuna autocorrelazione (valori casuali nello spazio)
-      <0  -> anti-correlazione (vicini sistematicamente diversi)
+    Moran's I of the morphology score over the k-nearest-neighbour graph.
+    ~1 = smooth gradient, ~0 = no spatial autocorrelation, <0 = anti-correlation.
     """
 
     embeddings = np.asarray(embeddings, dtype=np.float64)
@@ -150,7 +105,7 @@ def morphology_gradient_smoothness(
     if denom == 0:
         return float("nan")
 
-    # somma pesata (pesi binari 1 per i k vicini)
+    # binary weights: 1 for each of the k neighbours
     numerator = 0.0
     w_total = 0.0
     for i in range(n):
@@ -168,10 +123,7 @@ def evaluate_gradation(
     k: int = 15,
     random_state: int = 42,
 ) -> dict:
-    """
-    Calcola tutte le metriche di gradazione continua per una backbone e le
-    ritorna in un dizionario, pronte per una riga di tabella comparativa.
-    """
+    """All gradation metrics for one backbone, as a dict ready for a table row."""
 
     return {
         "grad_distance_morph_corr": distance_morphology_correlation(

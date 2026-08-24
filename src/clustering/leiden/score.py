@@ -76,14 +76,12 @@ def compute_leiden_clustering_score(
         dtype=float,
     )
 
-    # I contributi dei cluster assegnati devono essere sommati. I campioni
-    # marcati come rumore non costituiscono una comunità in questa misura.
+    # noise samples do not form a community, so only assigned clusters count
     assigned_modularity = np.sum(modularity_values)
 
     negative_mask = modularity_values < 0
 
-    # Non si applicano nuovamente i pesi delle dimensioni:
-    # il contributo di modularità incorpora già il volume del cluster.
+    # no size weighting here: the modularity contribution already embeds cluster volume
     bad_cluster_penalty = (
         np.sum(np.abs(modularity_values[negative_mask]))
         if np.any(negative_mask)

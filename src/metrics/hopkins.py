@@ -12,40 +12,14 @@ def compute_hopkins_dataframe(
     metric: str = "euclidean",
 ) -> pd.DataFrame:
     """
-    Calcola la statistica di Hopkins su embedding già PCA.
-
-    Convenzione:
-    - Hopkins ~ 0.5  -> distribuzione circa casuale
-    - Hopkins > 0.7  -> possibile tendenza al clustering
-    - Hopkins > 0.8  -> forte tendenza al clustering
-
-    Parameters
-    ----------
-    X:
-        Array di shape (n_samples, n_features), già PCA.
-    n_runs:
-        Numero di ripetizioni con seed diversi.
-    n_samples:
-        Numero di punti da campionare a ogni run.
-        Se None, viene calcolato da sample_fraction.
-    sample_fraction:
-        Frazione dei punti da campionare se n_samples è None.
-    random_state:
-        Seed iniziale per riproducibilità.
-    metric:
-        Metrica usata da NearestNeighbors.
-        Per PCA usare normalmente "euclidean".
-
-    Returns
-    -------
-    pd.DataFrame
-        DataFrame con statistiche riassuntive di Hopkins.
+    Hopkins statistic over n_runs resamplings of PCA-reduced embeddings.
+    ~0.5 = random, >0.7 = clustering tendency, >0.8 = strong clustering tendency.
     """
 
     X = np.asarray(X, dtype=np.float64)
 
     if not np.all(np.isfinite(X)):
-        raise ValueError("X contiene NaN o infiniti.")
+        raise ValueError("X contains NaN or infinite values.")
 
     n, d = X.shape
 
@@ -73,7 +47,6 @@ def compute_hopkins_dataframe(
     for seed in seeds:
         rng = np.random.default_rng(int(seed))
 
-        # Campiona punti reali
         real_indices = rng.choice(
             n,
             size=n_samples_eff,
@@ -81,19 +54,17 @@ def compute_hopkins_dataframe(
         )
         real_points = X[real_indices]
 
-        # Genera punti casuali uniformi nel bounding box dello spazio PCA
+        # uniform points inside the bounding box of the PCA space
         random_points = rng.uniform(
             low=mins,
             high=maxs,
             size=(n_samples_eff, d),
         )
 
-        # Distanza dei punti reali dal loro nearest neighbor reale più vicino
-        # Il primo vicino è il punto stesso, quindi si prende il secondo
+        # the first neighbour of a real point is itself, so take the second
         real_distances, _ = nn.kneighbors(real_points, n_neighbors=2)
         w = real_distances[:, 1]
 
-        # Distanza dei punti casuali dal nearest neighbor reale più vicino
         random_distances, _ = nn.kneighbors(random_points, n_neighbors=1)
         u = random_distances[:, 0]
 

@@ -56,10 +56,10 @@ def extract_tissue_mask(
     clean = opening(mask, np.ones((3, 3), dtype=bool))
     clean = closing(clean, np.ones((7, 7), dtype=bool))
 
-    # chiude piccole interruzioni nella maschera
+    # close small gaps in the mask
     clean = closing(clean, disk(5))
 
-    # rimuove piccoli oggetti isolati
+    # remove small isolated objects
     clean = remove_small_objects(
         clean.astype(bool),
         max_size=small_objects_max_size,

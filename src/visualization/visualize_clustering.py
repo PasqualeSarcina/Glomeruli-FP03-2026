@@ -574,7 +574,7 @@ def plot_nearest_neighbors_with_distances(
 
     if k >= n_samples:
         raise ValueError(
-            f"k={k} è troppo grande. Deve essere minore di n_samples={n_samples}."
+            f"k={k} is too large; it must be smaller than n_samples={n_samples}."
         )
 
     query_indices = list(query_indices)
